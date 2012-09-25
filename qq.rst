@@ -1,7 +1,7 @@
 webqq3.0 协议分析
 ===================
 
-生成密码
+生成密码test
 ----------------
 访问如下的url **http://check.ptlogin2.qq.com/check?uin=qqnumber&appid=1003903&r=0.09714xxxx** 得到如下信息
 
