@@ -49,8 +49,8 @@
             
   <div class="section" id="webqq3-0">
 <h1>webqq3.0 协议分析<a class="headerlink" href="#webqq3-0" title="Permalink to this headline">¶</a></h1>
-<div class="section" id="id1">
-<h2>生成密码<a class="headerlink" href="#id1" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="token">
+<h2>生成密码Token<a class="headerlink" href="#token" title="Permalink to this headline">¶</a></h2>
 <p>访问如下的url <strong>http://check.ptlogin2.qq.com/check?uin=qqnumber&amp;appid=1003903&amp;r=0.09714xxxx</strong> 得到如下信息</p>
 <div class="highlight-javascript"><div class="highlight"><pre><span class="nx">pt_checkVC</span><span class="p">(</span><span class="s1">&#39;0&#39;</span><span class="p">,</span> <span class="s1">&#39;!B55&#39;</span><span class="p">,</span> <span class="s1">&#39;\x00\x00\x00\x00\xa6\xce\xef\xfe&#39;</span><span class="p">)</span>
 </pre></div>
@@ -73,7 +73,7 @@
 </div>
 </div>
 <div class="section" id="ndlogin">
-<span id="id2"></span><h2>使用生成的密码二次登陆<a class="headerlink" href="#ndlogin" title="Permalink to this headline">¶</a></h2>
+<span id="id1"></span><h2>使用生成的密码二次登陆<a class="headerlink" href="#ndlogin" title="Permalink to this headline">¶</a></h2>
 <p>使用上次生成的密码字符串拼接如下url,进行二次登陆:</p>
 <p><strong>http://ptlogin2.qq.com/login?u=10897944&amp;p=07B8A85663FAB28A25CEFEC495AD15CB&amp;verifycode=!WD3&amp;webqq_type=10&amp;remember_uin=1&amp;login2qq=1&amp;aid=1003903&amp;u1=http%3A%2F%2Fwebqq.qq.com%2Floginproxy.html%3Flogin2qq%3D1%26webqq_type%3D10&amp;h=1&amp;ptredirect=0&amp;ptlang=2052&amp;from_ui=1&amp;pttype=1&amp;dumy=&amp;fp=loginerroralert&amp;action=1-20-8656&amp;mibao_css=m_webqq&amp;t=1&amp;g=1</strong></p>
 <ol class="arabic simple">
@@ -106,8 +106,8 @@
 </pre></div>
 </div>
 </div>
-<div class="section" id="id3">
-<h2>获取朋友的列表<a class="headerlink" href="#id3" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="id2">
+<h2>获取朋友的列表<a class="headerlink" href="#id2" title="Permalink to this headline">¶</a></h2>
 <p>登陆成功后获取自己的朋友列表，需要组装下列请求发送到 <a class="reference external" href="http://s.web2.qq.com/api/get_user_friend2">http://s.web2.qq.com/api/get_user_friend2</a></p>
 <div class="highlight-javascript"><div class="highlight"><pre><span class="nx">r</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;h&quot;</span><span class="o">:</span><span class="s2">&quot;hello&quot;</span><span class="p">,</span><span class="s2">&quot;vfwebqq&quot;</span><span class="o">:</span><span class="s2">&quot;9635b7bdfb20a7d08f43c53856c05954b2f1a0b1f4efff16cc605ce3a1b84792ac678dee4b919c1a&quot;</span><span class="p">}</span>
 </pre></div>
@@ -158,7 +158,7 @@
 </table>
 </div>
 <div class="section" id="receivemsg">
-<span id="id4"></span><h2>接收消息<a class="headerlink" href="#receivemsg" title="Permalink to this headline">¶</a></h2>
+<span id="id3"></span><h2>接收消息<a class="headerlink" href="#receivemsg" title="Permalink to this headline">¶</a></h2>
 <p>使用链接 <a class="reference external" href="http://d.web2.qq.com/channel/poll2">http://d.web2.qq.com/channel/poll2</a> 发送 <cite>POST</cite> 请求轮询好友发送的消息</p>
 <p><strong>clientid</strong> 是一个long型的整数，一般写一个就行了，后面可以重复使用</p>
 <p><strong>POST 过去的参数都必须先进行编码后发送</strong></p>
@@ -172,8 +172,8 @@
 </pre></div>
 </div>
 </div>
-<div class="section" id="id5">
-<h2>发送消息给好友<a class="headerlink" href="#id5" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="id4">
+<h2>发送消息给好友<a class="headerlink" href="#id4" title="Permalink to this headline">¶</a></h2>
 <p>发送 <cite>POST</cite> 请求到链接 <a class="reference external" href="http://d.web2.qq.com/channel/send_buddy_msg2">http://d.web2.qq.com/channel/send_buddy_msg2</a> ，并提交以下内容到服务器即可, 需要注意的是发送的内容要进行 <tt class="docutils literal"><span class="pre">url编码</span></tt> 之后发送</p>
 <div class="highlight-javascript"><div class="highlight"><pre><span class="nx">clientid</span><span class="o">=</span><span class="mi">44597165</span>
 <span class="nx">psessionid</span><span class="o">=</span><span class="mi">8304</span><span class="nx">fbcd9008992d818c910636a81146633f3bdd6b8e0a53b910d59b40e521dd924fb9</span>
@@ -226,18 +226,18 @@
 </tbody>
 </table>
 </div>
+<div class="section" id="id5">
+<h2>发送群消息<a class="headerlink" href="#id5" title="Permalink to this headline">¶</a></h2>
+</div>
 <div class="section" id="id6">
-<h2>发送群消息<a class="headerlink" href="#id6" title="Permalink to this headline">¶</a></h2>
+<h2>获取好友的详细信息<a class="headerlink" href="#id6" title="Permalink to this headline">¶</a></h2>
 </div>
 <div class="section" id="id7">
-<h2>获取好友的详细信息<a class="headerlink" href="#id7" title="Permalink to this headline">¶</a></h2>
-</div>
-<div class="section" id="id8">
-<h2>心跳维护<a class="headerlink" href="#id8" title="Permalink to this headline">¶</a></h2>
+<h2>心跳维护<a class="headerlink" href="#id7" title="Permalink to this headline">¶</a></h2>
 <p>周期性的发送 <cite>GET</cite> 请求到 url <a class="reference external" href="http://webqq.qq.com/web2/get_msg_tip?uin=&amp;tp=1&amp;id=0&amp;retype=1&amp;rc=1&amp;lv=3&amp;t=1348458711542">http://webqq.qq.com/web2/get_msg_tip?uin=&amp;tp=1&amp;id=0&amp;retype=1&amp;rc=1&amp;lv=3&amp;t=1348458711542</a> 维持与qq服务器的连接</p>
 </div>
-<div class="section" id="id9">
-<h2>改变登陆状态<a class="headerlink" href="#id9" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="id8">
+<h2>改变登陆状态<a class="headerlink" href="#id8" title="Permalink to this headline">¶</a></h2>
 <p>发送 <cite>GET</cite> 请求到 url <a class="reference external" href="http://d.web2.qq.com/channel/change_status2?newstatus=hidden&amp;clientid=44597165&amp;psessionid=aac22e218a25034e1e1d9ed142c52168005f5983&amp;t=1348482231366">http://d.web2.qq.com/channel/change_status2?newstatus=hidden&amp;clientid=44597165&amp;psessionid=aac22e218a25034e1e1d9ed142c52168005f5983&amp;t=1348482231366</a></p>
 <p>参数解释:</p>
 <table border="1" class="docutils">
@@ -285,15 +285,15 @@
   <h3><a href="index.html">Table Of Contents</a></h3>
   <ul>
 <li><a class="reference internal" href="#">webqq3.0 协议分析</a><ul>
-<li><a class="reference internal" href="#id1">生成密码</a></li>
+<li><a class="reference internal" href="#token">生成密码Token</a></li>
 <li><a class="reference internal" href="#ndlogin">使用生成的密码二次登陆</a></li>
-<li><a class="reference internal" href="#id3">获取朋友的列表</a></li>
+<li><a class="reference internal" href="#id2">获取朋友的列表</a></li>
 <li><a class="reference internal" href="#receivemsg">接收消息</a></li>
-<li><a class="reference internal" href="#id5">发送消息给好友</a></li>
-<li><a class="reference internal" href="#id6">发送群消息</a></li>
-<li><a class="reference internal" href="#id7">获取好友的详细信息</a></li>
-<li><a class="reference internal" href="#id8">心跳维护</a></li>
-<li><a class="reference internal" href="#id9">改变登陆状态</a></li>
+<li><a class="reference internal" href="#id4">发送消息给好友</a></li>
+<li><a class="reference internal" href="#id5">发送群消息</a></li>
+<li><a class="reference internal" href="#id6">获取好友的详细信息</a></li>
+<li><a class="reference internal" href="#id7">心跳维护</a></li>
+<li><a class="reference internal" href="#id8">改变登陆状态</a></li>
 </ul>
 </li>
 </ul>
