@@ -2,7 +2,8 @@ webqq3.0 协议分析
 ===================
 
 生成密码
-----------------
+----------
+    
 访问如下的url **http://check.ptlogin2.qq.com/check?uin=qqnumber&appid=1003903&r=0.09714xxxx** 得到如下信息
 
 .. code-block:: javascript
@@ -44,7 +45,7 @@ qq 密码的计算方法如下
 
 2. 发送过来的cookie都要保存起来，后面在请求的时候发送给 webqq
 
-3. 组装二次登陆的 `http://d.web2.qq.com/channel/login2`,里面用到了ptwebqq参数, 需要注意的是本次需要发送的是 `POST` 请求:
+3. 组装二次登陆的 http://d.web2.qq.com/channel/login2,里面用到了ptwebqq参数, 需要注意的是本次需要发送的是 `POST` 请求:
 
 **r=%7B%22status%22%3A%22online%22%2C%22ptwebqq%22%3A%2272541a7b79772b8f09f72261b30e82b27e7712f44fa76884231d47b4d2894dc3%22%2C%22passwd_sig%22%3A%22%22%2C%22clientid%22%3A%2232383579%22%2C%22psessionid%22%3Anull%7D&clientid=32383579&psessionid=null**
 
@@ -57,7 +58,7 @@ qq 密码的计算方法如下
 
     psessionid: null
 
-    r:{"status":"online","ptwebqq":"72541a7b79772b8f09f72261b30e82b27e7712f44fa76884231d47b4d2894dc3","passwd_sig":"","clientid":"32383579","psessionid":null}
+    r: {"status":"online","ptwebqq":"72541a7b79772b8f09f72261b30e82b27e7712f44fa76884231d47b4d2894dc3","passwd_sig":"","clientid":"32383579","psessionid":null}
 
 
 对上面的内容进行urlencode 后发送到服务器
@@ -81,7 +82,9 @@ qq 密码的计算方法如下
 获取朋友的列表
 ----------------
 
-登陆成功后获取自己的朋友列表，需要组装下列请求发送到 http://s.web2.qq.com/api/get_user_friend2
+登陆成功后获取自己的朋友列表，需要组装下列 **POST** 请求发送到 http://s.web2.qq.com/api/get_user_friend2
+
+需要设置 Referer 参数为 http://d.web2.qq.com/proxy.html?v=20110331002&callback=2
 
 .. code-block:: javascript
 
@@ -127,6 +130,10 @@ qq 密码的计算方法如下
 
 **POST 过去的参数都必须先进行编码后发送**
 
+必须设置http header **Referer:http://d.web2.qq.com/proxy.html?v=20110331002&callback=1&id=3** 这个值目前是固定的
+
+轮询消息也不需要有cookies的支持
+
 .. code-block:: haskell
 
   clientid=32383579
@@ -139,9 +146,70 @@ qq 密码的计算方法如下
 
   {"retcode":0,"result":[{"poll_type":"buddies_status_change","value":{"uin":3983012188,"status":"online","client_type":1}}]}
 
+retcode 为 0 才可以获取后续的值， 具体的消息类型通过result字段的 **poll_type** 的值决定， **poll_type** 的可选值如下表:
+
++-------------------------+------------------------------------------------------------------+
+| poll_type               | 描述                                                             |
++=========================+==================================================================+
+| buddies_status_change   | 用户的在线状态发生改变                                           |
++-------------------------+------------------------------------------------------------------+
+| message                 | 收到用户发送的消息                                               |
++-------------------------+------------------------------------------------------------------+
+| kick_message            | 同一个账号在另外的地方登陆,客户端收到后应该断开与服务器的连接    |
++-------------------------+------------------------------------------------------------------+
+
+result 是一个数组，所以里面可以包含多个不同 **poll_type** 的消息
+
+buddies_status_change 消息的结构如下:
+
+.. code-block:: javascript
+  
+  {"poll_type":"buddies_status_change", "value":{"uin":xxxxxxx,"status":"online","client_type":1}}
+
+message 消息的结构如下:
+
+.. code-block:: javascript
+
+  {'poll_type': 'message', 
+    'value': 
+        {
+            'reply_ip': 176498310, 'msg_type': 9, 'msg_id': 10171, 
+            'content': [
+                         [
+                          'font', {'color': '000000', 'style': [0, 0, 0], 'name': '\u5b8b\u4f53', 'size': 9}
+                         ] , '\u4e2d\u5348\u5462\r'
+                       ], 
+             'msg_id2': 158459, 'from_uin': 3898449591L, 'time': 1348566488, 'to_uin': 10897944
+        }
+  }
+
+kick_message 消息的结构如下:
+
+.. code-block:: javascript
+
+  {
+   'poll_type': 'kick_message', 
+    'value': 
+        {
+        'reply_ip': 0, 
+        'msg_type': 48,
+        'msg_id': 30519, 
+        'reason': 'xxxx for force logout', 
+        'msg_id2': 30520, 
+        'from_uin': 10000, 
+        'show_reason': 1,
+        'to_uin': 10897944
+        }
+ }
+
+
 发送消息给好友
 ---------------
 发送 `POST` 请求到链接 http://d.web2.qq.com/channel/send_buddy_msg2 ，并提交以下内容到服务器即可, 需要注意的是发送的内容要进行 ``url编码`` 之后发送
+
+发送消息时不需要cookie的支持，服务器只识别clientid和psessionid这两个参数
+
+必须设置http header **Referer:http://d.web2.qq.com/proxy.html?v=20110331002&callback=1&id=3** 这个值目前是固定的
 
 .. code-block:: javascript
 
@@ -202,6 +270,8 @@ r 参数的详细解释如下表:
 -------------
 发送 `GET` 请求到 url http://d.web2.qq.com/channel/change_status2?newstatus=hidden&clientid=44597165&psessionid=aac22e218a25034e1e1d9ed142c52168005f5983&t=1348482231366
 
+这个也不需要cookie的支持，但是clientid和psessionid要正确填写
+
 参数解释:
 
 +-------------------+-------------------------------+
@@ -224,3 +294,18 @@ r 参数的详细解释如下表:
 .. code-block:: javascript
 
   {"retcode":0,"result":"ok"}
+
+
+webqq返回码解释
+----------------
+
++------------+-----------------------------------------------+
+| 返回码     | 意义                                          |
++============+===============================================+
+| 102        | 轮询消息超时                                  |
++------------+-----------------------------------------------+
+| 0          | 成功                                          |
++------------+-----------------------------------------------+
+| 116        | 通知更新ptwebqq的值                           |
++------------+-----------------------------------------------+
+
