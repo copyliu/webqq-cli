@@ -6,6 +6,9 @@ from urllib2 import BaseHandler
 import random
 from hashlib import md5
 import gevent
+from gevent import monkey
+# monkey.patch_socket()
+# monkey.patch_select()
 
 GET_VCODE_URL = "http://check.ptlogin2.qq.com/check?uin=%s&appid=1003903&r=%s"
 
@@ -93,15 +96,16 @@ class WebQQ(object):
         poll_mess_url = "http://d.web2.qq.com/channel/poll2"
        
         encodeparams = "r=%7B%22clientid%22%3A%22"+self.clientid+"%22%2C%22psessionid%22%3A%22"+self.psessionid+"%22%2C%22key%22%3A0%2C%22ids%22%3A%5B%5D%7D&clientid="+self.clientid+"&psessionid="+self.psessionid
-        pollreq = urllib2.Request(poll_mess_url, encodeparams)
-        pollreq.add_header("Referer","http://d.web2.qq.com/proxy.html?v=20110331002&callback=1&id=3")
-        pollreq.add_header("User-Agent","Mozilla/5.0 (X11; Linux i686; rv:16.0) Gecko/20100101 Firefox/16.0")
 
         while 1:
             try:
-                response = json.loads(urllib2.urlopen(pollreq).read())
-                print response
-                if response["retcode"]==0:
+
+                pollreq = urllib2.Request(poll_mess_url, encodeparams)
+                pollreq.add_header("Referer","http://d.web2.qq.com/proxy.html?v=20110331002&callback=1&id=3")
+                pollreq.add_header("User-Agent","Mozilla/5.0 (X11; Linux i686; rv:16.0) Gecko/20100101 Firefox/16.0")
+                response = json.loads(urllib2.urlopen(pollreq, timeout=60).read())
+                retcode = response["retcode"]
+                if retcode == 0:
                     result = response["result"]
                     for message in result:
                         poll_type, value = message["pll_type"], message["value"]
@@ -110,6 +114,9 @@ class WebQQ(object):
                         if poll_type == "message":
                             fromwho = value["reply_ip"]
                             print "收到用户发来的消息"
+                elif retcode == 102:
+                    print "没收到消息，超时..."
+
             except Exception, e:
                 print str(e)
 
