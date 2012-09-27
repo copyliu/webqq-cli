@@ -1,21 +1,27 @@
 # -*- coding:utf-8 -*-
 
 import urllib, urllib2, cookielib
-import json, time
+import json, time, os
 from urllib2 import BaseHandler
 import random
 from hashlib import md5
+
+import logging,logging.config
 
 from colorama import init
 init()
 from colorama import Fore
 
 import gevent
-from gevent import monkey, queue
+from gevent import monkey, queue, pool
 import socket
 monkey.patch_all()
 socket.setdefaulttimeout(120)
 
+
+def getLogger():
+    logging.config.fileConfig(os.path.join(os.getcwd(),"chatloggin.conf"))
+    return logging.getLogger()
 
 def textoutput(msgtype, messagetext):
     import re
@@ -24,15 +30,15 @@ def textoutput(msgtype, messagetext):
         who, message = highlightre.groups()[0], highlightre.groups()[1]
 
         if msgtype == 1:
-            print Fore.GREEN + who + Fore.YELLOW+ message + Fore.RESET
+            getLogger().info(Fore.GREEN + who + Fore.YELLOW+ message + Fore.RESET)
 
         if msgtype == 2:
-            print Fore.BLUE + who + Fore.RESET + message
+            getLogger().info(Fore.BLUE + who + Fore.RESET + message)
         if msgtype == 3:
-            print Fore.RED + who + Fore.RESET + message
+           getLogger().info(Fore.RED + who + Fore.RESET + message)
 
     else:
-        print messagetext
+        getLogger().info(messagetext)
 
 
 class MsgCounter(object):
@@ -115,8 +121,10 @@ class WebQQ(object):
         self.friends = None
 
         self.mq = queue.Queue(20)
+        self.taskpool = pool.Pool(10)
         self.runflag = False
         self.msgindex = random.randint(1,99999999)
+        self.logger = getLogger()
 
     def build_userinfo(self):
         self.friendinfo = {}
@@ -142,7 +150,6 @@ class WebQQ(object):
 
         self.opener.open(login1url)
         self.ptwebqq = self.ckjar._cookies[".qq.com"]["/"]["ptwebqq"].value
-        print "login1 ok"
         return self
 
     def login(self):
@@ -168,12 +175,11 @@ class WebQQ(object):
         self.vfwebqq = response["result"]["vfwebqq"]
         self.psessionid = response["result"]["psessionid"]
         self.fakeid = response["result"]["uin"]
-        print "登陆成功..."
+        self.logger.info("登陆成功！")
         return self
 
 
     def get_friends(self):
-        print "获取朋友列表..."
         getfriendurl = "https://s.web2.qq.com/api/get_user_friends2"
         encodeparams = "r=%7B%22h%22%3A%22hello%22%2C%22vfwebqq%22%3A%22"+self.vfwebqq+"%22%7D"
         getfriendreq = urllib2.Request(getfriendurl, encodeparams)
@@ -182,18 +188,17 @@ class WebQQ(object):
 
         self.friends = json.loads(urllib2.urlopen(getfriendreq, timeout=120).read())
         self.build_userinfo()
-        # with open("/tmp/firends.json", "w") as friends:
-            # friends.write(json.dumps(self.friendinfo))
 
         if self.friends["retcode"]!=0:
             raise WebQQException("get_friends failed")
+        self.logger.info("获取朋友列表...")
         return self
 
     def write_message(self, qqmsg):
         try:
             self.mq.put_nowait(qqmsg)
         except gevent.queue.Full:
-            print "%s 发送失败, 队列已满" % str(qqmsg)
+            self.logger.error("%s 发送失败, 队列已满" % str(qqmsg))
 
     def sendpost(self, url, message,headerdict=None):
         sendrequest = urllib2.Request(url, message)
@@ -222,9 +227,14 @@ class WebQQ(object):
             self.write_message(buddies)
             return "ok"
 
+        def quit():
+            self.stop()
+
         from SimpleXMLRPCServer import SimpleXMLRPCServer
         server = SimpleXMLRPCServer(("127.0.0.1", 6379))
         server.register_function(sendmessage, "sendmessage")
+        server.register_function(quit, "quit")
+
         print "rpc server already started!"
         server.serve_forever()
         
@@ -242,7 +252,7 @@ class WebQQ(object):
                         qqmesg.retrycount+=1
                         self.write_message(qqmesg)
                 elif qqmesg.retrycount>=3:
-                    print "%s send failed" % str(qqmesg)
+                    self.logger.error("%s send failed" % str(qqmesg))
 
                 gevent.sleep(0.1)    
 
@@ -313,10 +323,14 @@ class WebQQ(object):
     def start(self):
         self.runflag = True
         self.login().login1().login2().get_friends()
-        gevent.joinall([gevent.spawn(self.send_message), gevent.spawn(self.poll_message), gevent.spawn(self.rpcserver)])
+        self.taskpool.spawn(self.send_message)
+        self.taskpool.spawn(self.poll_message)
+        self.taskpool.spawn(self.rpcserver)
+        self.taskpool.join()
+        # gevent.joinall([gevent.spawn(self.send_message), gevent.spawn(self.poll_message), gevent.spawn(self.rpcserver)])
     
     def stop(self):
-        pass
+        self.taskpool.kill()
 
 if __name__ == '__main__':
     qq = WebQQ()
