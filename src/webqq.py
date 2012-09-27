@@ -1,15 +1,38 @@
 # -*- coding:utf-8 -*-
 
-import urllib2, cookielib
-import json
+import urllib, urllib2, cookielib
+import json, time
 from urllib2 import BaseHandler
 import random
 from hashlib import md5
+
+from colorama import init
+init()
+from colorama import Fore
+
 import gevent
 from gevent import monkey, queue
 import socket
 monkey.patch_all()
-socket.setdefaulttimeout(30)
+socket.setdefaulttimeout(120)
+
+
+def textoutput(msgtype, messagetext):
+    import re
+    highlightre = re.match('.+ \[(.+)\](.+)', messagetext)
+    if highlightre:
+        who, message = highlightre.groups()[0], highlightre.groups()[1]
+
+        if msgtype == 1:
+            print Fore.GREEN + who + Fore.YELLOW+ message + Fore.RESET
+
+        if msgtype == 2:
+            print Fore.BLUE + who + Fore.RESET + message
+        if msgtype == 3:
+            print Fore.RED + who + Fore.RESET + message
+
+    else:
+        print messagetext
 
 
 class MsgCounter(object):
@@ -37,35 +60,43 @@ class MessageHandner(object):
 
 class QQMessage(object):
 
-    def __init__(self, to, messagetext,msgtype=9):
-        self.msgtype = msgtype
+    def __init__(self, to, messagetext, context=None):
         self.to = to 
-        self.messagetext = messagetext
+        self.messagetext = messagetext.encode("utf-8")
         self.retrycount = 0
+        self.context = context
     
     def encode(self, clientid, psessionid):
         self.clientid = clientid
         self.psessionid = psessionid
+        r=json.dumps({"to":self.to,"face":570,"content":"[\""+self.messagetext+"\\n\",[\"font\",{\"name\":\"宋体\",\"size\":\"10\",\"style\":[0,0,0],\"color\":\"000000\"}]]","msg_id":MessageIndex.get(),"clientid":self.clientid,"psessionid":self.psessionid})
+        return "r="+urllib.quote(r)+"&clientid="+self.clientid+"&psessionid="+self.psessionid
 
     def decode(self):
-        pass
+        return self.to, self.messagetext
+
+    def send(self, context, clientid, psessionid):
+        qqrawmsg = self.encode(clientid, psessionid)
+        return context.sendpost("https://d.web2.qq.com/channel/send_buddy_msg2", qqrawmsg)
 
     def __str__(self):
         
-        r={"to":self.to,"face":567,"content":"[\""+self.messagetext+"\\n\",[\"font\",{\"name\":\"宋体\",\"size\":\"10\",\"style\":[0,0,0],\"color\":\"000000\"}]]","msg_id":MessageIndex.get(),"clientid":"[clientid]","psessionid":"[psessionid]"}
-        return str(r)
+        return "send qq message to %s, message = %s\n" % (self.to, self.messagetext)
 
 class ShakeMessage(QQMessage):
     '''
     发送窗口抖动消息
     '''
-    pass
+    def __init__(self, to):
+        self.to = to
+        self.retrycount = 0
+    
+    def send(self, context, clientid, psessionid):
+        url = "http://d.web2.qq.com/channel/shake2?to_uin="+str(self.to)+"&clientid="+clientid+"&psessionid="+psessionid+"&t="+str(time.time())
+        return context.sendget(url)
 
-class TextMessage(QQMessage):
-    '''
-    文本消息，不带表情 
-    '''
-    def __init__(self):pass
+    def __str__(self):
+        return "send shake message to %s" % self.to
 
 class WebQQ(object):
 
@@ -149,10 +180,10 @@ class WebQQ(object):
         getfriendreq.add_header("Referer","http://d.web2.qq.com/proxy.html?v=20110331002&callback=2")
         getfriendreq.add_header("User-Agent","Mozilla/5.0 (X11; Linux i686; rv:16.0) Gecko/20100101 Firefox/16.0")
 
-        self.friends = json.loads(urllib2.urlopen(getfriendreq).read())
+        self.friends = json.loads(urllib2.urlopen(getfriendreq, timeout=120).read())
         self.build_userinfo()
-        with open("/tmp/firends.json", "w") as friends:
-            friends.write(json.dumps(self.friendinfo))
+        # with open("/tmp/firends.json", "w") as friends:
+            # friends.write(json.dumps(self.friendinfo))
 
         if self.friends["retcode"]!=0:
             raise WebQQException("get_friends failed")
@@ -164,33 +195,63 @@ class WebQQ(object):
         except gevent.queue.Full:
             print "%s 发送失败, 队列已满" % str(qqmsg)
 
-    def get_message(self, msgtype=9, to=0, messbody=""):
-        pass
+    def sendpost(self, url, message,headerdict=None):
+        sendrequest = urllib2.Request(url, message)
+        sendrequest.add_header("Referer","http://d.web2.qq.com/proxy.html?v=20110331002&callback=1&id=2")
+        sendrequest.add_header("User-Agent","Mozilla/5.0 (X11; Linux i686; rv:16.0) Gecko/20100101 Firefox/16.0")
 
-    def send_message(self):
+        if headerdict:
+            for k,v in headerdict.iteritems():
+                sendrequest.add_header(k,v)
+
+        try:
+            return json.loads(urllib2.urlopen(sendrequest).read())
+        except urllib2.URLError, urlex:
+            if urlex.errno != 67:
+                raise WebQQException(urlex)
+
+    def sendget(self, url):
+        response = self.opener.open(url).read()
+        return json.loads(response)
+
+    def rpcserver(self):
+
+        def sendmessage(to, message):
+            uin = self.get_uin_by_name(to)
+            buddies = QQMessage(uin, message)
+            self.write_message(buddies)
+            return "ok"
+
+        from SimpleXMLRPCServer import SimpleXMLRPCServer
+        server = SimpleXMLRPCServer(("127.0.0.1", 6379))
+        server.register_function(sendmessage, "sendmessage")
+        print "rpc server already started!"
+        server.serve_forever()
         
-        while 1:
+    def send_message(self):
+
+         while 1:
             try:
                 if not self.runflag:
                     break
 
-                qqmesg = self.mq.get(timeout=1)
-                print "准备发送消息" % str(qqmesg)
-                qqrawmsg = qqmesg.encode(self.client, self.psessionid)
-                sendrequest = urllib2.Request("https://d.web2.qq.com/channel/send_buddy_msg2", qqrawmsg)
-                sendrequest.add_header("http://d.web2.qq.com/proxy.html?v=20110331002&callback=1&id=2")
-                sendrequest.add_header("User-Agent","Mozilla/5.0 (X11; Linux i686; rv:16.0) Gecko/20100101 Firefox/16.0")
-                response = json.load(urllib2.urlopen(sendrequest).read())
+                qqmesg = self.mq.get_nowait()
+                response = qqmesg.send(self, self.clientid, self.psessionid)
 
-                if response["retcode"] !=0:
-                    print "%s 发送失败" % qqmesg
+                if response["retcode"] !=0 and qqmesg.retrycount<3:
+                        qqmesg.retrycount+=1
+                        self.write_message(qqmesg)
+                elif qqmesg.retrycount>=3:
+                    print "%s send failed" % str(qqmesg)
 
-                if qqmesg.retrycount <3:
-                    qqmesg.retrycount+=1
-                    self.write_message(qqmesg)
+                gevent.sleep(0.1)    
 
             except gevent.queue.Empty: 
-                pass
+                gevent.sleep(0.1)
+            except:
+                import traceback
+                traceback.print_exc()
+               
 
     def poll_message(self):
         poll_mess_url = "https://d.web2.qq.com/channel/poll2"
@@ -202,31 +263,28 @@ class WebQQ(object):
                 if not self.runflag:
                     break
 
-                pollreq = urllib2.Request(poll_mess_url, encodeparams)
-                pollreq.add_header("Referer","http://d.web2.qq.com/proxy.html?v=20110331002&callback=1&id=3")
-                pollreq.add_header("User-Agent","Mozilla/5.0 (X11; Linux i686; rv:16.0) Gecko/20100101 Firefox/16.0")
-                response = json.loads(urllib2.urlopen(pollreq).read())
+                response = self.sendpost(poll_mess_url, encodeparams)
                 retcode = response["retcode"]
 
                 if retcode == 0:
                     result = response["result"]
                     for message in result:
                         poll_type, value = message["poll_type"], message["value"]
-                        print value
+                        # print value
 
                         if poll_type == "buddies_status_change":
-                            
                             fromwho, status = self.get_user_info(value["uin"]), value["status"].encode("utf-8")
-                            print "用户 %s 在线状态变为 ,%s" % (fromwho, status)
+                            textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
 
                         if poll_type == "message":
                             fromwho, mess = self.get_user_info(value["from_uin"]), value["content"][1:]
                             messagebody = map(lambda item:":face"+str(item[1])+": " if isinstance(item, list) else item, mess)
-                            print "朋友 %s 说 %s" % (fromwho, "".join(messagebody).encode("utf-8"))
+                            textoutput(1, "朋友 [%s] 说 %s" % (fromwho, "".join(messagebody).encode("utf-8")))
 
                         if poll_type == "shake_message":
                             fromwho = self.get_user_info(value["from_uin"])
-                            print "朋友 %s 给你发送一个窗口抖动 :)" % fromwho
+                            textoutput(3, "朋友 [%s] 给你发送一个窗口抖动 :)" % fromwho)
+                            self.write_message(ShakeMessage(value["from_uin"]))
 
                         if poll_type == "kick_message":
                             print "当前账号已经在别处登陆！"
@@ -237,6 +295,10 @@ class WebQQ(object):
 
                 gevent.sleep(0)
 
+            except WebQQException, webex:
+                if urlex.errno == 67:
+                    print "poll mesage timeout"
+
             except Exception, e:
                 import traceback
                 traceback.print_exc()
@@ -245,10 +307,17 @@ class WebQQ(object):
     def get_user_info(self, uin):
         return self.friendinfo.get(uin, str(uin)).encode("utf-8")
 
+    def get_uin_by_name(self, name):
+        return self.friendinfo.get(name, None)
+
     def start(self):
         self.runflag = True
         self.login().login1().login2().get_friends()
-        gevent.joinall([gevent.spawn(self.send_message), gevent.spawn(self.poll_message)])
+        gevent.joinall([gevent.spawn(self.send_message), gevent.spawn(self.poll_message), gevent.spawn(self.rpcserver)])
+    
+    def stop(self):
+        pass
+
 if __name__ == '__main__':
     qq = WebQQ()
     qq.start()
