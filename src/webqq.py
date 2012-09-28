@@ -361,6 +361,7 @@ class WebQQ(object):
 
                         if poll_type == "kick_message":
                             print "当前账号已经在别处登陆！"
+                            self.stop()
                             break
                         
                 elif retcode == 102:
@@ -430,7 +431,7 @@ class WebQQ(object):
         gevent.signal(signal.SIGINT, self.stop)
 
     def logout(self):
-        LogoutMessage().send(self, self.clientid, self.psessionid)
+        LogoutMessage().send(self, self.clientid, self.psessionid).get()
         self.stop()
 
 if __name__ == '__main__':
