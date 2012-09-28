@@ -12,11 +12,12 @@ from colorama import init
 init()
 from colorama import Fore
 
-import gevent
+import gevent, greenlet
 from gevent import monkey, queue, pool
 import socket
+import struct
+
 monkey.patch_all()
-socket.setdefaulttimeout(120)
 
 
 def getLogger():
@@ -67,6 +68,7 @@ class MessageHandner(object):
 class QQMessage(object):
 
     def __init__(self, to, messagetext, context=None):
+        self.msgtype = 1
         self.to = to 
         self.messagetext = messagetext.encode("utf-8")
         self.retrycount = 0
@@ -81,9 +83,29 @@ class QQMessage(object):
     def decode(self):
         return self.to, self.messagetext
 
+    def sendOk(self, result):
+        pass
+
+    def sendFailed(self, result):
+        try:
+            result.get()
+        except Exception:
+            print "send %s failed" % str(self)
+
+        if self.retrycount <3:
+            self.context.write_message(self)
+            self.retrycount+=1
+        elif self.retrycount==3:
+            print str(self), "发送失败"
+
+
     def send(self, context, clientid, psessionid):
         qqrawmsg = self.encode(clientid, psessionid)
-        return context.sendpost("https://d.web2.qq.com/channel/send_buddy_msg2", qqrawmsg)
+        return context.spawn("https://d.web2.qq.com/channel/send_buddy_msg2", \
+                qqrawmsg,
+                task = context.sendpost,
+                linkok = self.sendOk,
+                linkfailed = self.sendFailed)
 
     def __str__(self):
         
@@ -94,15 +116,68 @@ class ShakeMessage(QQMessage):
     发送窗口抖动消息
     '''
     def __init__(self, to):
+        self.msgtype = 2
         self.to = to
         self.retrycount = 0
-    
+   
+    def sendFailed(self, *args):
+        print "shake message send failed!"
+
     def send(self, context, clientid, psessionid):
         url = "http://d.web2.qq.com/channel/shake2?to_uin="+str(self.to)+"&clientid="+clientid+"&psessionid="+psessionid+"&t="+str(time.time())
-        return context.sendget(url)
+        return context.spawn(url, 
+                task = context.sendget, 
+                linkfailed = self.sendFailed)
 
     def __str__(self):
         return "send shake message to %s" % self.to
+
+class KeepaliveMessage(QQMessage):
+    ''' 心跳消息 '''
+
+    def __init__(self):
+        self.msgtype = 3
+
+    def send(self, context):
+        url = "http://webqq.qq.com/web2/get_msg_tip?uin=&tp=1&id=0&retype=1&rc=2&lv=3&t="+str(time.time())
+        return context.spawn(url, task = context.sendget)
+
+class LogoutMessage(QQMessage):
+    '''
+    注销消息
+    '''
+    def __init__(self):
+        self.msgtype = 4
+
+    def sendOk(self, result):
+        print result.get()
+
+    def send(self, context, clientid, psessionid):
+        logouturl = "http://d.web2.qq.com/channel/logout2?ids=&clientid="+clientid+"&psessionid="+psessionid+"&t="+str(time.time())
+        return context.spawn(logouturl, task = context.sendget, linkok = self.sendOk)
+
+class MessageFactory(object):
+   
+
+    @staticmethod
+    def getMessage(webcontext, message):
+
+        msgtype = struct.unpack("i", message[:4])[0]
+
+        if msgtype == 1:
+            tolen, bodylen = struct.unpack("ii", message[4:12])
+            to, body = struct.unpack("%ss%ss" % (tolen, bodylen), message[12:])
+            uin = webcontext.get_uin_by_name(to)
+            return QQMessage(uin, body.decode("utf-8"), context = webcontext)
+
+        if msgtype == 2:
+            tolen = struct.unpack("i", message[4:8])
+            to = struct.unpack("%ss" % tolen, message[8:])
+            uin = webcontext.get_uin_by_name(to)
+            return ShakeMessage(uin)
+
+        if msgtype == 4:
+            return LogoutMessage()
 
 class WebQQ(object):
 
@@ -124,6 +199,8 @@ class WebQQ(object):
         self.taskpool = pool.Pool(10)
         self.runflag = False
         self.msgindex = random.randint(1,99999999)
+        from redis import Redis
+        self.redisconn = Redis()
         self.logger = getLogger()
 
     def build_userinfo(self):
@@ -200,7 +277,7 @@ class WebQQ(object):
         except gevent.queue.Full:
             self.logger.error("%s 发送失败, 队列已满" % str(qqmsg))
 
-    def sendpost(self, url, message,headerdict=None):
+    def sendpost(self, url, message,headerdict=None, timeoutsecs=30):
         sendrequest = urllib2.Request(url, message)
         sendrequest.add_header("Referer","http://d.web2.qq.com/proxy.html?v=20110331002&callback=1&id=2")
         sendrequest.add_header("User-Agent","Mozilla/5.0 (X11; Linux i686; rv:16.0) Gecko/20100101 Firefox/16.0")
@@ -210,57 +287,43 @@ class WebQQ(object):
                 sendrequest.add_header(k,v)
 
         try:
-            return json.loads(urllib2.urlopen(sendrequest).read())
+            return json.loads(urllib2.urlopen(sendrequest, timeout=timeoutsecs).read())
         except urllib2.URLError, urlex:
-            if urlex.errno != 67:
-                raise WebQQException(urlex)
+            raise WebQQException(urlex)
 
     def sendget(self, url):
         response = self.opener.open(url).read()
         return json.loads(response)
 
-    def rpcserver(self):
-
-        def sendmessage(to, message):
-            uin = self.get_uin_by_name(to)
-            buddies = QQMessage(uin, message)
-            self.write_message(buddies)
-            return "ok"
-
-        def quit():
-            self.stop()
-
-        from SimpleXMLRPCServer import SimpleXMLRPCServer
-        server = SimpleXMLRPCServer(("127.0.0.1", 6379))
-        server.register_function(sendmessage, "sendmessage")
-        server.register_function(quit, "quit")
-
-        print "rpc server already started!"
-        server.serve_forever()
         
     def send_message(self):
 
          while 1:
             try:
-                if not self.runflag:
-                    break
+                message = self.redisconn.lpop("messagepool")
+                if message:
+                    print "got message"
+                    qqmesg = MessageFactory.getMessage(self, message)
 
-                qqmesg = self.mq.get_nowait()
-                response = qqmesg.send(self, self.clientid, self.psessionid)
+                    if isinstance(qqmesg, LogoutMessage):
+                        print "logout message"
 
-                if response["retcode"] !=0 and qqmesg.retrycount<3:
-                        qqmesg.retrycount+=1
-                        self.write_message(qqmesg)
-                elif qqmesg.retrycount>=3:
-                    self.logger.error("%s send failed" % str(qqmesg))
+                    qqmesg.send(self, self.clientid, self.psessionid)    
+
+                innermsg = self.mq.get_nowait()
+                innermsg.send(self, self.clientid, self.psessionid)
 
                 gevent.sleep(0.1)    
 
             except gevent.queue.Empty: 
                 gevent.sleep(0.1)
+
+            except greenlet.GreenletExit:
+                self.logger.info("send_message exitting......")
+                break
             except:
-                import traceback
-                traceback.print_exc()
+                pass
+
                
 
     def poll_message(self):
@@ -273,7 +336,7 @@ class WebQQ(object):
                 if not self.runflag:
                     break
 
-                response = self.sendpost(poll_mess_url, encodeparams)
+                response = self.sendpost(poll_mess_url, encodeparams, timeoutsecs=60)
                 retcode = response["retcode"]
 
                 if retcode == 0:
@@ -306,32 +369,74 @@ class WebQQ(object):
                 gevent.sleep(0)
 
             except WebQQException, webex:
-                if urlex.errno == 67:
-                    print "poll mesage timeout"
+                import traceback
+                traceback.print_exc()
+                print webex
+
+            except greenlet.GreenletExit:
+                self.logger.info("poll_message exitting......")
+                break
 
             except Exception, e:
                 import traceback
                 traceback.print_exc()
 
+    def keepalive(self):
+        
+        while 1:
+            try:
+                KeepaliveMessage().send(self)
+                gevent.sleep(60)
+            except greenlet.GreenletExit:
+                self.logger.info("Keepalive exitting......")
+                break
 
     def get_user_info(self, uin):
         return self.friendinfo.get(uin, str(uin)).encode("utf-8")
 
     def get_uin_by_name(self, name):
-        return self.friendinfo.get(name, None)
+        return self.friendinfo.get(name.decode("utf-8"), None)
 
     def start(self):
         self.runflag = True
+
         self.login().login1().login2().get_friends()
         self.taskpool.spawn(self.send_message)
         self.taskpool.spawn(self.poll_message)
-        self.taskpool.spawn(self.rpcserver)
+        self.taskpool.spawn(self.keepalive)
+
+        self.installsignal()
         self.taskpool.join()
-        # gevent.joinall([gevent.spawn(self.send_message), gevent.spawn(self.poll_message), gevent.spawn(self.rpcserver)])
     
     def stop(self):
+        LogoutMessage().send(self, self.clientid, self.psessionid)
         self.taskpool.kill()
 
+    def spawn(self, *args, **kwargs):
+
+        g = gevent.spawn(kwargs["task"], *args)
+        self.taskpool.add(g)
+
+        if kwargs.get("linkok"):
+            g.link(kwargs["linkok"])
+        if kwargs.get("linkfailed"):
+            g.link_exception(kwargs["linkfailed"])
+
+        return g
+
+    def installsignal(self):
+        import signal
+        gevent.signal(signal.SIGTERM, self.stop)
+        gevent.signal(signal.SIGINT, self.stop)
+
+    def logout(self):
+        LogoutMessage().send(self, self.clientid, self.psessionid)
+        self.stop()
+
 if __name__ == '__main__':
+
     qq = WebQQ()
-    qq.start()
+    try:
+        qq.start()
+    except:
+        qq.logout()
