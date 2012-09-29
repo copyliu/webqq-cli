@@ -306,12 +306,16 @@ class WebQQ(object):
 
     def build_userinfo(self):
         self.friendinfo = {}
+        self.redisconn.delete("friends")
+
         for friend in self.friends["result"]["marknames"]:
+            self.redisconn.lpush("friends", friend["markname"])
             self.friendinfo[friend["markname"]] = friend["uin"]
             self.friendinfo[friend["uin"]] = friend["markname"]
         
         for friend in self.friends["result"]["info"]:
             if not self.friendinfo.has_key(friend["uin"]):
+                self.redisconn.lpush("friends", friend["nick"])
                 self.friendinfo[friend["nick"]] = friend["uin"]
                 self.friendinfo[friend["uin"]] = friend["nick"]
     
@@ -330,10 +334,11 @@ class WebQQ(object):
             raise WebQQException("get group info failed!")
 
         grouplist = response["result"]["gnamelist"]
-
+        self.redisconn.delete("groups")
         for group in grouplist:
             self.groupinfo[group["code"]] = group
             self.groupinfo[group["name"]] = group
+            self.redisconn.lpush("groups","%s" % group["name"])
 
         return self
 
