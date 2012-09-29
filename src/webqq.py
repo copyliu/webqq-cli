@@ -26,9 +26,9 @@ def getLogger():
 
 def textoutput(msgtype, messagetext):
     import re
-    highlightre = re.match('.+ \[(.+)\](.+)', messagetext)
+    highlightre = re.match('(.+ )\[(.+)\](.+)', messagetext)
     if highlightre:
-        who, message = highlightre.groups()[0], highlightre.groups()[1]
+        prefix, who, message = highlightre.groups()[0], highlightre.groups()[1], highlightre.groups()[2]
 
         if msgtype == 1:
             getLogger().info(Fore.GREEN + who + Fore.YELLOW+ message + Fore.RESET)
@@ -36,13 +36,14 @@ def textoutput(msgtype, messagetext):
         if msgtype == 2:
             getLogger().info(Fore.BLUE + who + Fore.RESET + message)
         if msgtype == 3:
-           getLogger().info(Fore.RED + who + Fore.RESET + message)
+           getLogger().info(Fore.GREEN + prefix + Fore.RED + who + Fore.RESET + message)
 
     else:
         getLogger().info(messagetext)
 
 
 class MsgCounter(object):
+
     def __init__(self):
         self.msgindex = random.randint(1,99999999)
 
@@ -63,7 +64,15 @@ class MessageHandner(object):
     '''
     对消息进行处理
     '''
-    pass
+    def __init__(self, context, message):
+        self.context = context
+        self.message = message
+
+    def buildmessage(self):
+        pass
+
+    def handle(self):
+        pass
 
 class QQMessage(object):
 
@@ -73,11 +82,18 @@ class QQMessage(object):
         self.messagetext = messagetext.encode("utf-8")
         self.retrycount = 0
         self.context = context
+        self.url = "https://d.web2.qq.com/channel/send_buddy_msg2"
     
     def encode(self, clientid, psessionid):
         self.clientid = clientid
         self.psessionid = psessionid
-        r=json.dumps({"to":self.to,"face":570,"content":"[\""+self.messagetext+"\\n\",[\"font\",{\"name\":\"宋体\",\"size\":\"10\",\"style\":[0,0,0],\"color\":\"000000\"}]]","msg_id":MessageIndex.get(),"clientid":self.clientid,"psessionid":self.psessionid})
+        r=json.dumps({"to":self.to,"face":570,\
+                "content":"[\""+self.messagetext+\
+                "\\n\",[\"font\",\
+                {\"name\":\"宋体\",\"size\":\"10\",\"style\":[0,0,0],\"color\":\"000000\"}]]",\
+                "msg_id":MessageIndex.get(),"clientid":self.clientid,"psessionid":self.psessionid\
+                })
+
         return "r="+urllib.quote(r)+"&clientid="+self.clientid+"&psessionid="+self.psessionid
 
     def decode(self):
@@ -101,15 +117,35 @@ class QQMessage(object):
 
     def send(self, context, clientid, psessionid):
         qqrawmsg = self.encode(clientid, psessionid)
-        return context.spawn("https://d.web2.qq.com/channel/send_buddy_msg2", \
+        return context.spawn(self.url, \
                 qqrawmsg,
                 task = context.sendpost,
                 linkok = self.sendOk,
                 linkfailed = self.sendFailed)
 
     def __str__(self):
-        
         return "send qq message to %s, message = %s\n" % (self.to, self.messagetext)
+
+class GroupMessage(QQMessage):
+    '''
+    群消息
+    '''
+    def __init__(self, to, messagetext, context=None):
+        super(GroupMessage, self).__init__(to, messagetext, context)
+        self.url = "http://d.web2.qq.com/channel/send_qun_msg2"
+
+    def encode(self, clientid, psessionid):
+        rdict = json.dumps({"group_uin":self.context.get_uin_by_groupname(self.to),\
+                "content":"[\""+self.messagetext+\
+                "\\n\",[\"font\",\
+                {\"name\":\"宋体\",\"size\":\"10\",\"style\":[0,0,0],\"color\":\"000000\"}]]",\
+                "msg_id":MessageIndex.get(),"clientid":clientid,"psessionid":psessionid\
+                })
+        return "r="+urllib.quote(rdict)+"&clientid="+clientid+"&psessionid="+psessionid
+
+
+    def __str__(self):
+        return "send group message %s to %s " % (self.messagetext, self.to)
 
 class ShakeMessage(QQMessage):
     '''
@@ -124,7 +160,9 @@ class ShakeMessage(QQMessage):
         print "shake message send failed!"
 
     def send(self, context, clientid, psessionid):
-        url = "http://d.web2.qq.com/channel/shake2?to_uin="+str(self.to)+"&clientid="+clientid+"&psessionid="+psessionid+"&t="+str(time.time())
+        url = "http://d.web2.qq.com/channel/shake2?to_uin="+str(self.to)\
+                +"&clientid="+clientid+"&psessionid="+psessionid+"&t="+str(time.time())
+
         return context.spawn(url, 
                 task = context.sendget, 
                 linkfailed = self.sendFailed)
@@ -153,8 +191,20 @@ class LogoutMessage(QQMessage):
         print result.get()
 
     def send(self, context, clientid, psessionid):
-        logouturl = "http://d.web2.qq.com/channel/logout2?ids=&clientid="+clientid+"&psessionid="+psessionid+"&t="+str(time.time())
-        return context.spawn(logouturl, task = context.sendget, linkok = self.sendOk)
+        logouturl = "http://d.web2.qq.com/channel/logout2?ids=&clientid="\
+                +clientid+"&psessionid="+psessionid+"&t="+str(time.time())
+        return context.spawn(\
+                logouturl, task = context.sendget, linkok = self.sendOk)
+
+class StatusChangeMessage(QQMessage):
+    '''状态变更消息'''
+    def __init__(self, status, who):
+        self.msgtype = 5
+        self.status = status
+        self.who = who
+
+    def encode(self):
+        pass
 
 class MessageFactory(object):
    
@@ -213,6 +263,28 @@ class WebQQ(object):
             if not self.friendinfo.has_key(friend["uin"]):
                 self.friendinfo[friend["nick"]] = friend["uin"]
                 self.friendinfo[friend["uin"]] = friend["nick"]
+    
+    def build_groupinfo(self):
+        getgroupurl = "https://s.web2.qq.com/api/get_group_name_list_mask2"
+        encodeparams = "r="+urllib.quote(json.dumps({"vfwebqq":self.vfwebqq}))
+        response = self.sendpost(
+                getgroupurl,
+                encodeparams,
+                {"Referer":"http://s.web2.qq.com/proxy.html"}
+                )
+
+        self.logger.debug("获取qq群信息......")
+        self.groupinfo = {}
+        if response["retcode"] !=0:
+            raise WebQQException("get group info failed!")
+
+        grouplist = response["result"]["gnamelist"]
+
+        for group in grouplist:
+            self.groupinfo[group["code"]] = group
+            self.groupinfo[group["name"]] = group
+
+        return self
 
     def gethashpwd(self):
         w = "14yhl9t"
@@ -223,7 +295,12 @@ class WebQQ(object):
                   ).hexdigest().upper()
 
     def login1(self):
-        login1url = "http://ptlogin2.qq.com/login?u="+self.qq+"&p="+self.gethashpwd()+"&verifycode="+self.vcode+"&webqq_type=10&remember_uin=1&login2qq=1&aid=1003903&u1=http%3A%2F%2Fwebqq.qq.com%2Floginproxy.html%3Flogin2qq%3D1%26webqq_type%3D10&h=1&ptredirect=0&ptlang=2052&from_ui=1&pttype=1&dumy=&fp=loginerroralert&action=1-20-8656&mibao_css=m_webqq&t=1&g=1"
+        login1url = "http://ptlogin2.qq.com/login?u="+self.qq+"&p="+\
+                self.gethashpwd()+"&verifycode="+self.vcode+\
+                "&webqq_type=10&remember_uin=1&login2qq=1&aid=1003903&u1"+\
+                "=http%3A%2F%2Fwebqq.qq.com%2Floginproxy.html%3Flogin2qq%3D1%26"+\
+                "webqq_type%3D10&h=1&ptredirect=0&ptlang=2052&from_ui=1&pttype=1"+\
+                "&dumy=&fp=loginerroralert&action=1-20-8656&mibao_css=m_webqq&t=1&g=1"
 
         self.opener.open(login1url)
         self.ptwebqq = self.ckjar._cookies[".qq.com"]["/"]["ptwebqq"].value
@@ -243,7 +320,11 @@ class WebQQ(object):
 
     def login2(self):
         login2url = "http://d.web2.qq.com/channel/login2"
-        encodeparams = "r=%7B%22status%22%3A%22online%22%2C%22ptwebqq%22%3A%22"+self.ptwebqq+"%22%2C%22passwd_sig%22%3A%22%22%2C%22clientid%22%3A%22"+self.clientid+"%22%2C%22psessionid%22%3Anull%7D&clientid="+self.clientid+"&psessionid=null"
+        rdict = json.dumps({"status":"online","ptwebqq":self.ptwebqq,\
+                "passwd_sig":"","clientid":self.clientid,"psessionid":None})
+
+        encodeparams = "r="+urllib.quote(rdict)+"&clientid="+self.clientid+"&psessionid=null"
+
         response = json.loads(self.opener.open(login2url, encodeparams).read())
         if response["retcode"] !=0:
             raise WebQQException("login2 failed! errcode=%s, errmsg=%s"\
@@ -302,7 +383,6 @@ class WebQQ(object):
             try:
                 message = self.redisconn.lpop("messagepool")
                 if message:
-                    print "got message"
                     qqmesg = MessageFactory.getMessage(self, message)
 
                     if isinstance(qqmesg, LogoutMessage):
@@ -322,14 +402,13 @@ class WebQQ(object):
                 self.logger.info("send_message exitting......")
                 break
             except:
-                pass
-
+                import traceback
+                traceback.print_exc()
                
-
     def poll_message(self):
         poll_mess_url = "https://d.web2.qq.com/channel/poll2"
-       
-        encodeparams = "r=%7B%22clientid%22%3A%22"+self.clientid+"%22%2C%22psessionid%22%3A%22"+self.psessionid+"%22%2C%22key%22%3A0%2C%22ids%22%3A%5B%5D%7D&clientid="+self.clientid+"&psessionid="+self.psessionid
+        rdict = json.dumps({"clientid":self.clientid, "psessionid":self.psessionid, "key":0,"ids":[]})
+        encodeparams = "r="+urllib.quote(rdict)+"&clientid="+self.clientid+"&psessionid="+self.psessionid
 
         while 1:
             try:
@@ -343,16 +422,26 @@ class WebQQ(object):
                     result = response["result"]
                     for message in result:
                         poll_type, value = message["poll_type"], message["value"]
-                        # print value
+                        # self.logger.debug("poll_type = %s, message = %s" % (poll_type, value))
 
                         if poll_type == "buddies_status_change":
                             fromwho, status = self.get_user_info(value["uin"]), value["status"].encode("utf-8")
                             textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
 
                         if poll_type == "message":
-                            fromwho, mess = self.get_user_info(value["from_uin"]), value["content"][1:]
-                            messagebody = map(lambda item:":face"+str(item[1])+": " if isinstance(item, list) else item, mess)
-                            textoutput(1, "朋友 [%s] 说 %s" % (fromwho, "".join(messagebody).encode("utf-8")))
+                            fromwho, mess = self.get_user_info(
+                                    value["from_uin"]), value["content"][1:]
+
+                            sendtime = time.strftime("%Y-%m-%d %H:%M:%S",\
+                                    time.localtime(long(value["time"])))
+
+                            messagebody = map(lambda item:\
+                                    ":face"+str(item[1])+": " \
+                                    if isinstance(item, list) else item, mess)
+
+                            textoutput(1, "朋友 [%s] 说 %s" % (
+                                fromwho, sendtime + " "+ "".join(messagebody).encode("utf-8")
+                                ))
 
                         if poll_type == "shake_message":
                             fromwho = self.get_user_info(value["from_uin"])
@@ -360,9 +449,32 @@ class WebQQ(object):
                             self.write_message(ShakeMessage(value["from_uin"]))
 
                         if poll_type == "kick_message":
-                            print "当前账号已经在别处登陆！"
+                            self.logger.info("当前账号已经在别处登陆！")
                             self.stop()
                             break
+
+                        if poll_type == "group_message":
+                            groupcode, fromwho, mess = value["group_code"], \
+                                    self.get_user_info(value["send_uin"]), \
+                                    value["content"][1:]
+
+                            sendtime = time.strftime("%Y-%m-%d %H:%M:%S",\
+                                    time.localtime(long(value["time"])))
+
+                            messagebody = map(lambda item:\
+                                    ":face"+str(item[1])+": " \
+                                    if isinstance(item, list) else item, mess)
+
+                            textoutput(3, "群%s [中%s] 说 %s" % (\
+                                    self.get_groupname_by_code(groupcode),\
+                                    fromwho, sendtime + " " \
+                                    +"".join(messagebody).encode("utf-8")\
+                                    ))
+
+                        if poll_type == "input_notify":
+                            fromwho = self.get_user_info(value["from_uin"])
+                            textoutput(3, "朋友 [%s] 正在打字......" % fromwho)
+
                         
                 elif retcode == 102:
                     print "没收到消息，超时..."
@@ -370,23 +482,20 @@ class WebQQ(object):
                 gevent.sleep(0)
 
             except WebQQException, webex:
-                import traceback
-                traceback.print_exc()
-                print webex
+                pass
 
             except greenlet.GreenletExit:
                 self.logger.info("poll_message exitting......")
                 break
 
-            except Exception, e:
-                import traceback
-                traceback.print_exc()
-
     def keepalive(self):
         
+        gevent.sleep(60)
+
         while 1:
             try:
                 KeepaliveMessage().send(self)
+                # self.write_message(GroupMessage("api测试群", u"发送测试", context = self))
                 gevent.sleep(60)
             except greenlet.GreenletExit:
                 self.logger.info("Keepalive exitting......")
@@ -398,10 +507,21 @@ class WebQQ(object):
     def get_uin_by_name(self, name):
         return self.friendinfo.get(name.decode("utf-8"), None)
 
+    def get_groupname_by_code(self, code):
+        groupinfo = self.groupinfo.get(code, None)
+        if groupinfo:
+            return groupinfo["name"].encode("utf-8")
+
+    def get_uin_by_groupname(self, groupname):
+        groupinfo = self.groupinfo.get(groupname.decode("utf-8"), None)
+
+        if groupinfo:
+            return groupinfo["gid"]
+
     def start(self):
         self.runflag = True
 
-        self.login().login1().login2().get_friends()
+        self.login().login1().login2().get_friends().build_groupinfo()
         self.taskpool.spawn(self.send_message)
         self.taskpool.spawn(self.poll_message)
         self.taskpool.spawn(self.keepalive)
@@ -416,7 +536,6 @@ class WebQQ(object):
     def spawn(self, *args, **kwargs):
 
         g = gevent.spawn(kwargs["task"], *args)
-        self.taskpool.add(g)
 
         if kwargs.get("linkok"):
             g.link(kwargs["linkok"])
@@ -437,7 +556,4 @@ class WebQQ(object):
 if __name__ == '__main__':
 
     qq = WebQQ()
-    try:
-        qq.start()
-    except:
-        qq.logout()
+    qq.start()
