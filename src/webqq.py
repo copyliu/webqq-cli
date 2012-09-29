@@ -60,19 +60,71 @@ class WebqqHandler(BaseHandler):
         return request
 
 class WebQQException(Exception):pass
+
 class MessageHandner(object):
     '''
     对消息进行处理
     '''
-    def __init__(self, context, message):
+    def __init__(self, context):
         self.context = context
-        self.message = message
 
-    def buildmessage(self):
-        pass
+    def dispatch(self, msgtype, message):
+        prefixmethod = "on_" + msgtype
+        method = getattr(self, prefixmethod) if hasattr(self, prefixmethod) else None
 
-    def handle(self):
-        pass
+        if method:
+            method(message)
+        
+    def on_message(self, message):
+
+        fromwho, mess = self.context.get_user_info(
+                message["from_uin"]), message["content"][1:]
+
+        sendtime = time.strftime("%Y-%m-%d %H:%M:%S",\
+                time.localtime(long(message["time"])))
+
+        messagebody = map(lambda item:\
+                ":face"+str(item[1])+": " \
+                if isinstance(item, list) else item, mess)
+
+        textoutput(1, "朋友 [%s] 说 %s" % (
+            fromwho, sendtime + " "+ "".join(messagebody).encode("utf-8")
+            ))
+
+    def on_group_message(self, message):
+        groupcode, fromwho, mess = message["group_code"], \
+                self.context.get_user_info(message["send_uin"]), \
+                message["content"][1:]
+
+        sendtime = time.strftime("%Y-%m-%d %H:%M:%S",\
+                time.localtime(long(message["time"])))
+
+        messagebody = map(lambda item:\
+                ":face"+str(item[1])+": " \
+                if isinstance(item, list) else item, mess)
+
+        textoutput(3, "群%s [中%s] 说 %s" % (\
+                self.context.get_groupname_by_code(groupcode),\
+                fromwho, sendtime + " " \
+                +"".join(messagebody).encode("utf-8")\
+                ))
+
+    def on_shake_message(self, message):
+        fromwho = self.context.get_user_info(message["from_uin"])
+        textoutput(3, "朋友 [%s] 给你发送一个窗口抖动 :)" % fromwho)
+        self.context.write_message(ShakeMessage(message["from_uin"]))
+
+    def on_kick_message(self, message):
+        self.logger.info("当前账号已经在别处登陆！")
+        self.context.stop()
+
+    def on_buddies_status_change(self, message):
+        fromwho, status = self.context.get_user_info(message["uin"]), message["status"].encode("utf-8")
+        textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
+
+    def on_input_notify(self, message):
+        fromwho = self.context.get_user_info(message["from_uin"])
+        textoutput(3, "朋友 [%s] 正在打字......" % fromwho)
 
 class QQMessage(object):
 
@@ -208,7 +260,6 @@ class StatusChangeMessage(QQMessage):
 
 class MessageFactory(object):
    
-
     @staticmethod
     def getMessage(webcontext, message):
 
@@ -231,7 +282,8 @@ class MessageFactory(object):
 
 class WebQQ(object):
 
-    def __init__(self):
+    def __init__(self, handler=None):
+        self.handler = handler if handler else MessageHandner(self)
         self.qq="10897944"
         self.ptwebqq=""
         self.psessionid=""
@@ -248,7 +300,6 @@ class WebQQ(object):
         self.mq = queue.Queue(20)
         self.taskpool = pool.Pool(10)
         self.runflag = False
-        self.msgindex = random.randint(1,99999999)
         from redis import Redis
         self.redisconn = Redis()
         self.logger = getLogger()
@@ -423,59 +474,8 @@ class WebQQ(object):
                     for message in result:
                         poll_type, value = message["poll_type"], message["value"]
                         # self.logger.debug("poll_type = %s, message = %s" % (poll_type, value))
+                        self.handler.dispatch(poll_type, value)
 
-                        if poll_type == "buddies_status_change":
-                            fromwho, status = self.get_user_info(value["uin"]), value["status"].encode("utf-8")
-                            textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
-
-                        if poll_type == "message":
-                            fromwho, mess = self.get_user_info(
-                                    value["from_uin"]), value["content"][1:]
-
-                            sendtime = time.strftime("%Y-%m-%d %H:%M:%S",\
-                                    time.localtime(long(value["time"])))
-
-                            messagebody = map(lambda item:\
-                                    ":face"+str(item[1])+": " \
-                                    if isinstance(item, list) else item, mess)
-
-                            textoutput(1, "朋友 [%s] 说 %s" % (
-                                fromwho, sendtime + " "+ "".join(messagebody).encode("utf-8")
-                                ))
-
-                        if poll_type == "shake_message":
-                            fromwho = self.get_user_info(value["from_uin"])
-                            textoutput(3, "朋友 [%s] 给你发送一个窗口抖动 :)" % fromwho)
-                            self.write_message(ShakeMessage(value["from_uin"]))
-
-                        if poll_type == "kick_message":
-                            self.logger.info("当前账号已经在别处登陆！")
-                            self.stop()
-                            break
-
-                        if poll_type == "group_message":
-                            groupcode, fromwho, mess = value["group_code"], \
-                                    self.get_user_info(value["send_uin"]), \
-                                    value["content"][1:]
-
-                            sendtime = time.strftime("%Y-%m-%d %H:%M:%S",\
-                                    time.localtime(long(value["time"])))
-
-                            messagebody = map(lambda item:\
-                                    ":face"+str(item[1])+": " \
-                                    if isinstance(item, list) else item, mess)
-
-                            textoutput(3, "群%s [中%s] 说 %s" % (\
-                                    self.get_groupname_by_code(groupcode),\
-                                    fromwho, sendtime + " " \
-                                    +"".join(messagebody).encode("utf-8")\
-                                    ))
-
-                        if poll_type == "input_notify":
-                            fromwho = self.get_user_info(value["from_uin"])
-                            textoutput(3, "朋友 [%s] 正在打字......" % fromwho)
-
-                        
                 elif retcode == 102:
                     print "没收到消息，超时..."
 
