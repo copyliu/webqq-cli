@@ -44,13 +44,14 @@ def chat():
         message = raw_input("|%s%s%s_>: " % (Fore.GREEN,lastfriend,Fore.RESET))
         if message =="quit":
             break
+        if message =="":continue
 
         if " " in message:
             to, body = message.split(" ")
         else:
             to, body = lastfriend, message
         # body = message
-        sendto(to,  message)
+        sendto(to,  body)
 
         lastfriend = to
 

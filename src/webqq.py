@@ -31,7 +31,7 @@ def textoutput(msgtype, messagetext):
         prefix, who, message = highlightre.groups()[0], highlightre.groups()[1], highlightre.groups()[2]
 
         if msgtype == 1:
-            getLogger().info(Fore.GREEN + who + Fore.YELLOW+ message + Fore.RESET)
+            getLogger().info(Fore.GREEN + prefix + who + Fore.YELLOW+ message + Fore.RESET)
 
         if msgtype == 2:
             getLogger().info(Fore.BLUE + who + Fore.RESET + message)
@@ -76,7 +76,6 @@ class MessageHandner(object):
             method(message)
         
     def on_message(self, message):
-
         fromwho, mess = self.context.get_user_info(
                 message["from_uin"]), message["content"][1:]
 
@@ -87,8 +86,22 @@ class MessageHandner(object):
                 ":face"+str(item[1])+": " \
                 if isinstance(item, list) else item, mess)
 
-        textoutput(1, "朋友 [%s] 说 %s" % (
-            fromwho, sendtime + " "+ "".join(messagebody).encode("utf-8")
+        for msg in mess:
+            if isinstance(msg, list):
+                msgtype = msg[0]
+                if msgtype == "offpic":
+                    content = msg[1]
+                    picpath = content["file_path"]
+                    self.context.spawn(
+                            picpath, str(message["from_uin"]), \
+                            task = self.context.downoffpic
+                            )
+                if msgtype == "cface":    
+                    to, guid, unknown  = str(message["from_uin"]), msg[1], msg[2]
+                    self.context.spawn(to, guid, task = self.context.downcface)
+
+        textoutput(1, "%s [%s] 说 %s" % (
+            sendtime, fromwho,  "".join(messagebody).encode("utf-8")
             ))
 
     def on_group_message(self, message):
@@ -115,12 +128,12 @@ class MessageHandner(object):
         self.context.write_message(ShakeMessage(message["from_uin"]))
 
     def on_kick_message(self, message):
-        self.logger.info("当前账号已经在别处登陆！")
+        self.context.logger.info("当前账号已经在别处登陆！")
         self.context.stop()
 
     def on_buddies_status_change(self, message):
         fromwho, status = self.context.get_user_info(message["uin"]), message["status"].encode("utf-8")
-        textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
+        # textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
 
     def on_input_notify(self, message):
         fromwho = self.context.get_user_info(message["from_uin"])
@@ -282,15 +295,16 @@ class MessageFactory(object):
 
 class WebQQ(object):
 
-    def __init__(self, handler=None):
+    def __init__(self, qqno, qqpwd, handler=None):
         self.handler = handler if handler else MessageHandner(self)
-        self.qq="10897944"
-        self.ptwebqq=""
-        self.psessionid=""
-        self.clientid=str(random.randint(1,99999999))
-        self.vfwebqq=""
-        self.vcode=""
-        self.uin=""
+        self.qq = qqno
+        self.qqpwd = qqpwd
+        self.ptwebqq = ""
+        self.psessionid = ""
+        self.clientid = str(random.randint(1,99999999))
+        self.vfwebqq = ""
+        self.vcode = ""
+        self.uin = ""
         self.ckjar = cookielib.MozillaCookieJar("/tmp/cookies.txt")
         self.cookiejar = urllib2.HTTPCookieProcessor(self.ckjar)
         self.opener = urllib2.build_opener(self.cookiejar, WebqqHandler)
@@ -343,10 +357,9 @@ class WebQQ(object):
         return self
 
     def gethashpwd(self):
-        w = "14yhl9t"
         return md5(\
                 md5(\
-                    (md5(w).digest()+self.uin)\
+                    (md5(self.qqpwd).digest()+self.uin)\
                     ).hexdigest().upper()+self.vcode\
                   ).hexdigest().upper()
 
@@ -432,7 +445,41 @@ class WebQQ(object):
         response = self.opener.open(url).read()
         return json.loads(response)
 
-        
+    def downcface(self, to, guid):
+        lcid = str(MessageIndex.get())
+        getcfaceurl = "http://d.web2.qq.com/channel/get_cface2?lcid="+ lcid +\
+                "&guid=" + guid + "&to=" + to + "&count=5&time=1&clientid=" + \
+                self.clientid + "&psessionid=" + self.psessionid
+        try:
+            print getcfaceurl
+            response = self.opener.open(getcfaceurl).read()
+            filename = "/tmp/%s" % guid
+            with open(filename, "w") as cface:
+                cface.write(response)
+
+            textoutput(3, "qqurl://%s " % filename)    
+        except:
+            import traceback
+            traceback.print_exc()
+
+    def downoffpic(self, url, fromuin):
+        getoffpicurl = "http://d.web2.qq.com/channel/get_offpic2?file_path=" + \
+                urllib.quote(url) + "&f_uin=" + fromuin + "&clientid=" + \
+                self.clientid + "&psessionid=" + self.psessionid
+        try:
+
+            response = self.opener.open(getoffpicurl).read()
+            filename = "/tmp/" + url[1:] + ".jpg"
+            with open(filename, "w") as offpic:
+                offpic.write(response)
+
+            textoutput(3, "qqurl://%s " % filename)    
+
+        except:
+            import traceback
+            traceback.print_exc()
+            self.logger.error("download %s failed" % getoffpicurl)
+
     def send_message(self):
 
          while 1:
@@ -559,6 +606,6 @@ class WebQQ(object):
         self.stop()
 
 if __name__ == '__main__':
-
-    qq = WebQQ()
+    import sys
+    qq = WebQQ(sys.argv[1], sys.argv[2])
     qq.start()
