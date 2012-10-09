@@ -1,5 +1,10 @@
 # -*- coding:utf-8 -*-
 
+'''
+webqq-cli v0.1
+author: alex8224@gmail.com
+
+'''
 import urllib, urllib2, cookielib
 import json, time, os
 from urllib2 import BaseHandler
@@ -15,6 +20,7 @@ from colorama import Fore
 import gevent, greenlet
 from gevent import monkey, queue, pool
 import socket
+socket.setdefaulttimeout(300)
 import struct
 
 monkey.patch_all()
@@ -133,7 +139,7 @@ class MessageHandner(object):
 
     def on_buddies_status_change(self, message):
         fromwho, status = self.context.get_user_info(message["uin"]), message["status"].encode("utf-8")
-        # textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
+        textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
 
     def on_input_notify(self, message):
         fromwho = self.context.get_user_info(message["from_uin"])
@@ -252,14 +258,11 @@ class LogoutMessage(QQMessage):
     def __init__(self):
         self.msgtype = 4
 
-    def sendOk(self, result):
-        print result.get()
-
     def send(self, context, clientid, psessionid):
         logouturl = "http://d.web2.qq.com/channel/logout2?ids=&clientid="\
                 +clientid+"&psessionid="+psessionid+"&t="+str(time.time())
         return context.spawn(\
-                logouturl, task = context.sendget, linkok = self.sendOk)
+                logouturl, task = context.sendget)
 
 class StatusChangeMessage(QQMessage):
     '''状态变更消息'''
@@ -287,8 +290,15 @@ class MessageFactory(object):
         if msgtype == 2:
             tolen = struct.unpack("i", message[4:8])
             to = struct.unpack("%ss" % tolen, message[8:])
+            to = to[0]
             uin = webcontext.get_uin_by_name(to)
             return ShakeMessage(uin)
+
+        if msgtype == 3:
+            tolen, bodylen = struct.unpack("ii", message[4:12])
+            to, body = struct.unpack("%ss%ss" % (tolen, bodylen), message[12:])
+            to = to[to.find("_")+1:]
+            return GroupMessage(to, body.decode("utf-8"), context = webcontext)
 
         if msgtype == 4:
             return LogoutMessage()
@@ -310,6 +320,7 @@ class WebQQ(object):
         self.opener = urllib2.build_opener(self.cookiejar, WebqqHandler)
         self.fakeid = ""
         self.friends = None
+        self.friendindex = 1
 
         self.mq = queue.Queue(20)
         self.taskpool = pool.Pool(10)
@@ -321,7 +332,6 @@ class WebQQ(object):
     def build_userinfo(self):
         self.friendinfo = {}
         self.redisconn.delete("friends")
-
         for friend in self.friends["result"]["marknames"]:
             self.redisconn.lpush("friends", friend["markname"])
             self.friendinfo[friend["markname"]] = friend["uin"]
@@ -335,7 +345,7 @@ class WebQQ(object):
     
     def build_groupinfo(self):
         getgroupurl = "https://s.web2.qq.com/api/get_group_name_list_mask2"
-        encodeparams = "r="+urllib.quote(json.dumps({"vfwebqq":self.vfwebqq}))
+        encodeparams = "r=" + urllib.quote(json.dumps({"vfwebqq":self.vfwebqq}))
         response = self.sendpost(
                 getgroupurl,
                 encodeparams,
@@ -352,7 +362,8 @@ class WebQQ(object):
         for group in grouplist:
             self.groupinfo[group["code"]] = group
             self.groupinfo[group["name"]] = group
-            self.redisconn.lpush("groups","%s" % group["name"])
+            self.redisconn.lpush("groups","%d_%s" % (self.friendindex, group["name"]))
+            self.friendindex +=1
 
         return self
 
@@ -441,8 +452,14 @@ class WebQQ(object):
         except urllib2.URLError, urlex:
             raise WebQQException(urlex)
 
+    def requestwithcookie(self, url):
+        ckjar = cookielib.MozillaCookieJar("/tmp/cookies.txt")
+        cookiejar = urllib2.HTTPCookieProcessor(ckjar)
+        return  urllib2.build_opener(cookiejar, WebqqHandler)
+
     def sendget(self, url):
-        response = self.opener.open(url).read()
+        # response = self.opener.open(url).read()
+        response = self.requestwithcookie(url).open(url).read()
         return json.loads(response)
 
     def downcface(self, to, guid):
@@ -450,17 +467,36 @@ class WebQQ(object):
         getcfaceurl = "http://d.web2.qq.com/channel/get_cface2?lcid="+ lcid +\
                 "&guid=" + guid + "&to=" + to + "&count=5&time=1&clientid=" + \
                 self.clientid + "&psessionid=" + self.psessionid
-        try:
-            print getcfaceurl
-            response = self.opener.open(getcfaceurl).read()
-            filename = "/tmp/%s" % guid
-            with open(filename, "w") as cface:
-                cface.write(response)
 
-            textoutput(3, "qqurl://%s " % filename)    
-        except:
-            import traceback
-            traceback.print_exc()
+        def sendrequest():
+            response = ""
+            try:
+                ckjar = cookielib.MozillaCookieJar("/tmp/cookies.txt")
+                cookiejar = urllib2.HTTPCookieProcessor(ckjar)
+                opener = urllib2.build_opener(cookiejar, WebqqHandler)
+                response = opener.open(getcfaceurl, timeout = 300).read()
+                try:
+                    print json.loads(response) 
+                    return False
+                except:
+                    pass
+
+                filename = "/tmp/%s" % guid
+                with open(filename, "w") as cface:
+                    cface.write(response)
+
+                textoutput(3, "qqurl://%s " % filename)    
+                return True
+            except:
+                # import traceback
+                # traceback.print_exc()
+                return False
+
+        for count in range(3):
+            if sendrequest():break
+            else:
+                self.logger.debug("retry downcface %d times"  % count)
+            gevent.sleep(0)    
 
     def downoffpic(self, url, fromuin):
         getoffpicurl = "http://d.web2.qq.com/channel/get_offpic2?file_path=" + \
@@ -482,7 +518,7 @@ class WebQQ(object):
 
     def send_message(self):
 
-         while 1:
+         while self.runflag:
             try:
                 message = self.redisconn.lpop("messagepool")
                 if message:
@@ -513,11 +549,8 @@ class WebQQ(object):
         rdict = json.dumps({"clientid":self.clientid, "psessionid":self.psessionid, "key":0,"ids":[]})
         encodeparams = "r="+urllib.quote(rdict)+"&clientid="+self.clientid+"&psessionid="+self.psessionid
 
-        while 1:
+        while self.runflag:
             try:
-                if not self.runflag:
-                    break
-
                 response = self.sendpost(poll_mess_url, encodeparams, timeoutsecs=60)
                 retcode = response["retcode"]
 
@@ -541,14 +574,11 @@ class WebQQ(object):
                 break
 
     def keepalive(self):
-        
-        gevent.sleep(60)
 
-        while 1:
+        while self.runflag:
             try:
-                KeepaliveMessage().send(self)
-                # self.write_message(GroupMessage("api测试群", u"发送测试", context = self))
                 gevent.sleep(60)
+                KeepaliveMessage().send(self)
             except greenlet.GreenletExit:
                 self.logger.info("Keepalive exitting......")
                 break
@@ -571,8 +601,8 @@ class WebQQ(object):
             return groupinfo["gid"]
 
     def start(self):
-        self.runflag = True
 
+        self.runflag = True
         self.login().login1().login2().get_friends().build_groupinfo()
         self.taskpool.spawn(self.send_message)
         self.taskpool.spawn(self.poll_message)
@@ -582,8 +612,10 @@ class WebQQ(object):
         self.taskpool.join()
     
     def stop(self):
-        LogoutMessage().send(self, self.clientid, self.psessionid)
+        LogoutMessage().send(self, self.clientid, self.psessionid).get()
+        self.runflag = False
         self.taskpool.kill()
+        self.taskpool.join()
 
     def spawn(self, *args, **kwargs):
 
@@ -606,6 +638,12 @@ class WebQQ(object):
         self.stop()
 
 if __name__ == '__main__':
-    import sys
-    qq = WebQQ(sys.argv[1], sys.argv[2])
+    os.system("stty -echo")
+    username = raw_input("Username:")
+    print ""
+    password = raw_input("Password:")
+    os.system("stty echo")
+    print ""
+    qq = WebQQ(username, password)
     qq.start()
+    print "qq exitting"

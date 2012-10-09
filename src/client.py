@@ -3,58 +3,119 @@
 from redis import Redis
 import struct
 import readline
+import re
 
 '''
 1. 发送消息给朋友
 2. 可自动完成朋友列表， Tab 键选择
 3. 可查找朋友
 4. 不写则直接发往最后选择的朋友
+
+发送数据的数据结构
++------------+------------------------+
+| int32      | 消息类型               |
+|            | 1. 普通消息            |
+|            | 2. 窗口抖动消息        |
+|            | 3. 群消息              |
+|            | 4. 注销消息            | 
++============+========================+
+| int32      | 消息接受者长度         |
++------------+------------------------+
+| int32      | 消息正文长度           |
++------------+------------------------+
+| string     | 消息接受者             |
++------------+------------------------+
+| string     | 消息正文               |
++------------+------------------------+
+
+`注意事项`:
+    1. 如果消息类型为注销消息（4 ),则后续字段不填
 '''
-conn = Redis()
-def sendto(to, message):
-    tolen, messagelen = len(to), len(message)
-    bytemsg = struct.pack("iii%ss%ss" % (tolen, messagelen), 1, tolen, messagelen, to, message)
-    conn.lpush("messagepool", bytemsg)
+MESSAGE = 1
+SHAKEMESSAGE = 2
+GRPMESSAGE = 3
 
+class Chat(object):
 
-def getfriends():
+    def __init__(self):
+        self.lastfriend = ""
+        self.conn = Redis()
+        self.runflag = True
 
-    friendsinfo = conn.lrange("friends",0 ,conn.llen("friends"))
-    groupsinfo = conn.lrange("groups", 0, conn.llen("groups"))
+    def executecmd(self, cmd, param):
+        if cmd == "shake":
+            self.sendto(SHAKEMESSAGE, param,'')
+            self.lastfriend = param
 
-    friendsinfo.extend(groupsinfo)
+        if cmd == "quit":
+            self.runflag = False
 
-    def completer(prefix, index):
-        matches = [friend for friend in friendsinfo if friend.startswith(prefix)]
-        try:
-            return matches[index]
-        except IndexError:
-            pass
+    def parsecmd(self, message):
+        cmdpattern = re.compile(r'^:(.*) ?(.*)$')
+        msgpattern = re.compile(r'^(.* )?(.*)$')
+        cmdmatch, msgmatch = cmdpattern.match(message), msgpattern.match(message)
 
-    readline.set_completer(completer)
-    readline.parse_and_bind("tab:complete")
+        if cmdmatch:
+            cmd, param = cmdmatch.groups()
+            self.executecmd(cmd, param)
 
-def chat():
-    lastfriend = ""
-    import colorama
-    colorama.init()
-    from colorama import Fore
+        elif msgmatch:
+            message = msgmatch.group() 
+            if not message or message =="":
+                return
+            to, body = msgmatch.groups()
 
-    while 1:
-        message = raw_input("|%s%s%s_>: " % (Fore.GREEN,lastfriend,Fore.RESET))
-        if message =="quit":
-            break
-        if message =="":continue
+            if not to and body:
+                to = self.lastfriend
+            to = to.strip()
 
-        if " " in message:
-            to, body = message.split(" ")
+            if to.find("_")>-1:
+                self.sendto(GRPMESSAGE, to, body)    
+            else:
+                self.sendto(MESSAGE, to, body)    
+            self.lastfriend = to
+
         else:
-            to, body = lastfriend, message
-        # body = message
-        sendto(to,  body)
+            pass
+            
+    def sendto(self, msgtype, to, message):
+        # msgtype = 3 if to.find("_")>-1 else 1
+        tolen, messagelen = len(to), len(message)
+        bytemsg = ""
+        if msgtype == MESSAGE or msgtype == GRPMESSAGE:
+            bytemsg = struct.pack("iii%ss%ss" % (tolen, messagelen), msgtype, tolen, messagelen, to, message)
+        elif msgtype == SHAKEMESSAGE:
+            bytemsg = struct.pack("ii%ss" % tolen, msgtype, tolen, to)
 
-        lastfriend = to
+        self.conn.lpush("messagepool", bytemsg)
 
+
+    def getfriends(self):
+
+        friendsinfo = self.conn.lrange("friends",0 ,self.conn.llen("friends"))
+        groupsinfo = self.conn.lrange("groups", 0, self.conn.llen("groups"))
+
+        friendsinfo.extend(groupsinfo)
+
+        def completer(prefix, index):
+            matches = [friend for friend in friendsinfo if friend.startswith(prefix)]
+            try:
+                return matches[index]
+            except IndexError:
+                pass
+
+        readline.set_completer(completer)
+        readline.parse_and_bind("tab:complete")
+        return self
+
+    def chat(self):
+        import colorama
+        colorama.init()
+        from colorama import Fore
+
+        while self.runflag:
+            message = raw_input("|%s%s%s_>: " % (Fore.GREEN,self.lastfriend,Fore.RESET))
+            self.parsecmd(message)
+   
 if __name__ == '__main__':
-    getfriends()
-    chat()
+    Chat().getfriends().chat()
