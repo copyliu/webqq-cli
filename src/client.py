@@ -30,6 +30,10 @@ import re
 
 `注意事项`:
     1. 如果消息类型为注销消息（4 ),则后续字段不填
+    2. 消息发送匹配
+
+        1. to message message 消息可能包含空格
+        2. message for prev person
 '''
 MESSAGE = 1
 SHAKEMESSAGE = 2
@@ -47,39 +51,39 @@ class Chat(object):
             self.sendto(SHAKEMESSAGE, param,'')
             self.lastfriend = param
 
-        if cmd == "quit":
+        elif cmd == "quit":
             self.runflag = False
 
     def parsecmd(self, message):
-        cmdpattern = re.compile(r'^:(.*) ?(.*)$')
-        msgpattern = re.compile(r'^(.* )?(.*)$')
+        cmdpattern = re.compile('^(:)(\w*)\s?(.*)$')
+        msgpattern = re.compile(r'^(\|)?(.*)$')
         cmdmatch, msgmatch = cmdpattern.match(message), msgpattern.match(message)
 
         if cmdmatch:
-            cmd, param = cmdmatch.groups()
+            _, cmd, param = cmdmatch.groups()
             self.executecmd(cmd, param)
 
         elif msgmatch:
-            message = msgmatch.group() 
-            if not message or message =="":
+            prefix, remaintext = msgmatch.groups()
+            tokens = remaintext.split()
+            if prefix == "|":
+                to, body  = tokens[0], "".join(tokens[1:])
+                self.lastfriend = to
+            else:
+                to, body = self.lastfriend, "".join(tokens)
+
+            if body =='':
                 return
-            to, body = msgmatch.groups()
 
-            if not to and body:
-                to = self.lastfriend
-            to = to.strip()
-
-            if to.find("_")>-1:
+            if to.find("_") > -1:
                 self.sendto(GRPMESSAGE, to, body)    
             else:
                 self.sendto(MESSAGE, to, body)    
-            self.lastfriend = to
 
         else:
             pass
             
     def sendto(self, msgtype, to, message):
-        # msgtype = 3 if to.find("_")>-1 else 1
         tolen, messagelen = len(to), len(message)
         bytemsg = ""
         if msgtype == MESSAGE or msgtype == GRPMESSAGE:
@@ -89,12 +93,10 @@ class Chat(object):
 
         self.conn.lpush("messagepool", bytemsg)
 
-
     def getfriends(self):
 
         friendsinfo = self.conn.lrange("friends",0 ,self.conn.llen("friends"))
         groupsinfo = self.conn.lrange("groups", 0, self.conn.llen("groups"))
-
         friendsinfo.extend(groupsinfo)
 
         def completer(prefix, index):

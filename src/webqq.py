@@ -22,7 +22,6 @@ from gevent import monkey, queue, pool
 import socket
 socket.setdefaulttimeout(300)
 import struct
-
 monkey.patch_all()
 
 
@@ -34,7 +33,7 @@ def textoutput(msgtype, messagetext):
     import re
     highlightre = re.match('(.+ )\[(.+)\](.+)', messagetext)
     if highlightre:
-        prefix, who, message = highlightre.groups()[0], highlightre.groups()[1], highlightre.groups()[2]
+        prefix, who, message = highlightre.groups()
 
         if msgtype == 1:
             getLogger().info(Fore.GREEN + prefix + who + Fore.YELLOW+ message + Fore.RESET)
@@ -139,11 +138,25 @@ class MessageHandner(object):
 
     def on_buddies_status_change(self, message):
         fromwho, status = self.context.get_user_info(message["uin"]), message["status"].encode("utf-8")
-        textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
+        import qqsetting
+        if fromwho in qqsetting.CARE_FRIENDS:
+            textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
 
     def on_input_notify(self, message):
         fromwho = self.context.get_user_info(message["from_uin"])
         textoutput(3, "朋友 [%s] 正在打字......" % fromwho)
+
+    def on_file_message(self, message):
+        if message["mode"] == 'recv':
+            fromwho = self.context.get_user_info(message["from_uin"])
+            filename = message["name"].encode("utf-8")
+            textoutput(2, "朋友 [%s] 发送文件 %s 给你" % (fromwho, filename))
+            to, guid = str(message["from_uin"]), urllib.quote(filename)
+            self.context.spawn(to, guid, filename, task = self.context.recvfile)
+
+    def on_push_offfile(self, message):
+        print "收到了离线文件"
+        pass
 
 class QQMessage(object):
 
@@ -174,10 +187,10 @@ class QQMessage(object):
         pass
 
     def sendFailed(self, result):
-        try:
-            result.get()
-        except Exception:
-            print "send %s failed" % str(self)
+        # try:
+            # result.get()
+        # except Exception:
+        # print "send %s failed" % str(self)
 
         if self.retrycount <3:
             self.context.write_message(self)
@@ -247,9 +260,11 @@ class KeepaliveMessage(QQMessage):
     def __init__(self):
         self.msgtype = 3
 
+    def sendFailed(self, result):pass
+
     def send(self, context):
         url = "http://webqq.qq.com/web2/get_msg_tip?uin=&tp=1&id=0&retype=1&rc=2&lv=3&t="+str(time.time())
-        return context.spawn(url, task = context.sendget)
+        return context.spawn(url, task = context.sendget, linkfailed = self.sendFailed)
 
 class LogoutMessage(QQMessage):
     '''
@@ -400,7 +415,7 @@ class WebQQ(object):
 
     def login2(self):
         login2url = "http://d.web2.qq.com/channel/login2"
-        rdict = json.dumps({"status":"online","ptwebqq":self.ptwebqq,\
+        rdict = json.dumps({"status":"offline","ptwebqq":self.ptwebqq,\
                 "passwd_sig":"","clientid":self.clientid,"psessionid":None})
 
         encodeparams = "r="+urllib.quote(rdict)+"&clientid="+self.clientid+"&psessionid=null"
@@ -452,16 +467,30 @@ class WebQQ(object):
         except urllib2.URLError, urlex:
             raise WebQQException(urlex)
 
-    def requestwithcookie(self, url):
+    def requestwithcookie(self):
         ckjar = cookielib.MozillaCookieJar("/tmp/cookies.txt")
         cookiejar = urllib2.HTTPCookieProcessor(ckjar)
-        return  urllib2.build_opener(cookiejar, WebqqHandler)
+        return urllib2.build_opener(cookiejar, WebqqHandler)
 
     def sendget(self, url):
-        # response = self.opener.open(url).read()
-        response = self.requestwithcookie(url).open(url).read()
+        response = self.requestwithcookie().open(url).read()
         return json.loads(response)
 
+    def recvfile(self, to, guid, filename):
+        lcid = str(MessageIndex.get())
+        recvonlineurl = "http://d.web2.qq.com/channel/get_file2?lcid=" + lcid + \
+                "&guid=" + guid+"&to=" + to + "&psessionid=" + self.psessionid + \
+                "&count=1&time=1349864752791&clientid=" + self.clientid
+        try:
+            response = self.requestwithcookie().open(recvonlineurl).read()
+            with open("/tmp/%s" % filename, "w") as recvfile:
+                recvfile.write(response)
+            print "file write end"    
+        except:
+            import traceback
+            traceback.print_exc()
+           
+        
     def downcface(self, to, guid):
         lcid = str(MessageIndex.get())
         getcfaceurl = "http://d.web2.qq.com/channel/get_cface2?lcid="+ lcid +\
@@ -545,20 +574,27 @@ class WebQQ(object):
                 traceback.print_exc()
                
     def poll_message(self):
-        poll_mess_url = "https://d.web2.qq.com/channel/poll2"
-        rdict = json.dumps({"clientid":self.clientid, "psessionid":self.psessionid, "key":0,"ids":[]})
-        encodeparams = "r="+urllib.quote(rdict)+"&clientid="+self.clientid+"&psessionid="+self.psessionid
+        poll_url = "https://d.web2.qq.com/channel/poll2"
+        rdict = json.dumps(
+                {"clientid":self.clientid, \
+                "psessionid":self.psessionid, "key":0,"ids":[]
+                }
+                )
+
+        encodeparams = "r=" + urllib.quote(rdict) + "&clientid=" +\
+                self.clientid + "&psessionid=" + self.psessionid
 
         while self.runflag:
             try:
-                response = self.sendpost(poll_mess_url, encodeparams, timeoutsecs=60)
+                response = self.sendpost(poll_url, encodeparams, timeoutsecs=60)
                 retcode = response["retcode"]
 
                 if retcode == 0:
                     result = response["result"]
                     for message in result:
                         poll_type, value = message["poll_type"], message["value"]
-                        # self.logger.debug("poll_type = %s, message = %s" % (poll_type, value))
+                        self.logger.debug(poll_type)
+                        self.logger.debug(value)
                         self.handler.dispatch(poll_type, value)
 
                 elif retcode == 102:
