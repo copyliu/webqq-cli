@@ -5,6 +5,10 @@ import struct
 import readline
 import re
 
+import colorama
+colorama.init()
+from colorama import Fore
+
 '''
 1. 发送消息给朋友
 2. 可自动完成朋友列表， Tab 键选择
@@ -50,9 +54,27 @@ class Chat(object):
         if cmd == "shake":
             self.sendto(SHAKEMESSAGE, param,'')
             self.lastfriend = param
+        
+        elif cmd == "online":
+            onlinecount = self.conn.llen("onlinefriends")
+            for guy in self.conn.lrange("onlinefriends", 0, onlinecount):
+                print(guy)
+
+            print("在线好友 %s%d%s" % (Fore.GREEN, onlinecount, Fore.RESET))
+
+        elif cmd == "stat":
+            onlinecount = self.conn.llen("onlinefriends")
+            for guy in self.conn.lrange("onlinefriends", 0, onlinecount):
+                if guy.startswith(param):
+                    print(Fore.GREEN + guy + Fore.RESET)
 
         elif cmd == "quit":
             self.runflag = False
+        else:
+            print(Fore.RED + ":quit " + Fore.RESET + "exit client")
+            print(Fore.RED + ":shake FRIEND " + Fore.RESET + "send shake message to friend")
+            print(Fore.RED + ":online " + Fore.RESET + "show all online friends")
+            print(Fore.RED + ":stat FRIEND" + Fore.RESET + " show friends status")
 
     def parsecmd(self, message):
         cmdpattern = re.compile('^(:)(\w*)\s?(.*)$')
@@ -111,9 +133,6 @@ class Chat(object):
         return self
 
     def chat(self):
-        import colorama
-        colorama.init()
-        from colorama import Fore
 
         while self.runflag:
             message = raw_input("|%s%s%s_>: " % (Fore.GREEN,self.lastfriend,Fore.RESET))

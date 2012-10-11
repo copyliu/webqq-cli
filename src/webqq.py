@@ -515,8 +515,24 @@ class WebQQ(object):
         except:
             import traceback
             traceback.print_exc()
-           
-        
+    
+    def poll_online_friends(self):
+        geturl = "http://d.web2.qq.com/channel/get_online_buddies2?clientid=%s&psessionid=%s&t=1349932882032"
+        while 1:
+            try:
+                onlineguys = self.sendget(geturl % (self.clientid, self.psessionid))
+                retcode, result = onlineguys["retcode"], onlineguys["result"]
+                if retcode == 0 and len(result)>0:
+                    batch = self.redisconn.pipeline(transaction = False)
+                    self.redisconn.delete("onlinefriends")
+                    for guy in result:
+                        markname = self.get_user_info(guy["uin"])
+                        batch.lpush("onlinefriends", markname + "-" + guy["status"])
+                    batch.execute()
+                gevent.sleep(60)
+            except greenlet.GreenletExit:
+                break
+
     def downcface(self, to, guid):
         lcid = str(MessageIndex.get())
         getcfaceurl = "http://d.web2.qq.com/channel/get_cface2?lcid="+ lcid +\
@@ -678,6 +694,7 @@ class WebQQ(object):
         self.taskpool.spawn(self.send_message)
         self.taskpool.spawn(self.poll_message)
         self.taskpool.spawn(self.keepalive)
+        self.taskpool.spawn(self.poll_online_friends)
 
         self.installsignal()
         self.taskpool.join()
