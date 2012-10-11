@@ -46,9 +46,9 @@ def textoutput(msgtype, messagetext):
     else:
         getLogger().info(messagetext)
 
-
-def notify(notifytype, notifytext):
-    pass
+import pynotify
+def notify(notifytext):
+    pynotify.Notification("通知", notifytext).show()
 
 class MsgCounter(object):
 
@@ -144,6 +144,7 @@ class MessageHandner(object):
         import qqsetting
         if fromwho in qqsetting.CARE_FRIENDS:
             textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
+            notify("%s %s" % (fromwho, status))
 
     def on_input_notify(self, message):
         fromwho = self.context.get_user_info(message["from_uin"])
@@ -490,6 +491,7 @@ class WebQQ(object):
                 "&guid=" + guid+"&to=" + to + "&psessionid=" + self.psessionid + \
                 "&count=1&time=1349864752791&clientid=" + self.clientid
         try:
+            notify("正在接受文件 %s" % filename)
             import subprocess
             filename = filename.replace("(","[").replace(")","]")
             cmd = "wget -q -O %s --referer='%s' --cookies=on --load-cookies=%s --keep-session-cookies '%s'"
@@ -506,7 +508,9 @@ class WebQQ(object):
             retcode = wgethandler.wait()
             if retcode == 0:
                 print "download ok"
+                notify("文件 %s 接收完成" % filename)
             else:
+                notify("文件 %s 接收失败" % filename)
                 print "download failed"
         except:
             import traceback
@@ -518,7 +522,7 @@ class WebQQ(object):
         getcfaceurl = "http://d.web2.qq.com/channel/get_cface2?lcid="+ lcid +\
                 "&guid=" + guid + "&to=" + to + "&count=5&time=1&clientid=" + \
                 self.clientid + "&psessionid=" + self.psessionid
-
+        # self.getface(to)
         def sendrequest():
             response = ""
             try:
@@ -543,6 +547,20 @@ class WebQQ(object):
             else:
                 self.logger.debug("retry downcface %d times"  % count)
             gevent.sleep(0)    
+
+    def getface(self, uin):
+        face = "%s.jpg" % uin
+        if os.path.exists(face):
+            return face
+
+        getfaceurl = "http://face4.qun.qq.com/cgi/svr/face/getface?cache=0&type=1&fid=0&uin=%s&vfwebqq=%s"
+        try:
+            response = self.requestwithcookie().open(getfaceurl % (uin, self.vfwebqq)).read()
+            with open(face, "w") as facefile:
+                facefile.write(response)
+            return face    
+        except:
+            pass
 
     def downoffpic(self, url, fromuin):
         getoffpicurl = "http://d.web2.qq.com/channel/get_offpic2?file_path=" + \
