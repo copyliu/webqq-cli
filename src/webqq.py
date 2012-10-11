@@ -47,6 +47,9 @@ def textoutput(msgtype, messagetext):
         getLogger().info(messagetext)
 
 
+def notify(notifytype, notifytext):
+    pass
+
 class MsgCounter(object):
 
     def __init__(self):
@@ -147,12 +150,15 @@ class MessageHandner(object):
         textoutput(3, "朋友 [%s] 正在打字......" % fromwho)
 
     def on_file_message(self, message):
+        fromwho = self.context.get_user_info(message["from_uin"])
         if message["mode"] == 'recv':
-            fromwho = self.context.get_user_info(message["from_uin"])
             filename = message["name"].encode("utf-8")
             textoutput(2, "朋友 [%s] 发送文件 %s 给你" % (fromwho, filename))
             to, guid = str(message["from_uin"]), urllib.quote(filename)
-            self.context.spawn(to, guid, filename, task = self.context.recvfile)
+            lcid = str(message["session_id"])
+            self.context.spawn(lcid, to, guid, filename, task = self.context.recvfile)
+        elif message["mode"] == "refuse":
+            textoutput(2, "朋友 [%s] 取消了发送文件" % (fromwho, ))
 
     def on_push_offfile(self, message):
         print "收到了离线文件"
@@ -330,12 +336,14 @@ class WebQQ(object):
         self.vfwebqq = ""
         self.vcode = ""
         self.uin = ""
-        self.ckjar = cookielib.MozillaCookieJar("/tmp/cookies.txt")
+        self.cookiesfile = "/tmp/cookies.txt"
+        self.ckjar = cookielib.MozillaCookieJar(self.cookiesfile)
         self.cookiejar = urllib2.HTTPCookieProcessor(self.ckjar)
         self.opener = urllib2.build_opener(self.cookiejar, WebqqHandler)
         self.fakeid = ""
         self.friends = None
         self.friendindex = 1
+        self.referurl = "http://d.web2.qq.com/proxy.html?v=20110331002&callback=1&id=2"
 
         self.mq = queue.Queue(20)
         self.taskpool = pool.Pool(10)
@@ -398,6 +406,7 @@ class WebQQ(object):
                 "&dumy=&fp=loginerroralert&action=1-20-8656&mibao_css=m_webqq&t=1&g=1"
 
         self.opener.open(login1url)
+        self.ckjar.save()
         self.ptwebqq = self.ckjar._cookies[".qq.com"]["/"]["ptwebqq"].value
         return self
 
@@ -468,7 +477,7 @@ class WebQQ(object):
             raise WebQQException(urlex)
 
     def requestwithcookie(self):
-        ckjar = cookielib.MozillaCookieJar("/tmp/cookies.txt")
+        ckjar = cookielib.MozillaCookieJar(self.cookiesfile)
         cookiejar = urllib2.HTTPCookieProcessor(ckjar)
         return urllib2.build_opener(cookiejar, WebqqHandler)
 
@@ -476,16 +485,29 @@ class WebQQ(object):
         response = self.requestwithcookie().open(url).read()
         return json.loads(response)
 
-    def recvfile(self, to, guid, filename):
-        lcid = str(MessageIndex.get())
+    def recvfile(self, lcid, to, guid, filename):
         recvonlineurl = "http://d.web2.qq.com/channel/get_file2?lcid=" + lcid + \
                 "&guid=" + guid+"&to=" + to + "&psessionid=" + self.psessionid + \
                 "&count=1&time=1349864752791&clientid=" + self.clientid
         try:
-            response = self.requestwithcookie().open(recvonlineurl).read()
-            with open("/tmp/%s" % filename, "w") as recvfile:
-                recvfile.write(response)
-            print "file write end"    
+            import subprocess
+            filename = filename.replace("(","[").replace(")","]")
+            cmd = "wget -q -O %s --referer='%s' --cookies=on --load-cookies=%s --keep-session-cookies '%s'"
+            wgethandler = subprocess.Popen(
+                    cmd % (
+                        filename.decode("utf-8"), 
+                        self.referurl, 
+                        self.cookiesfile, 
+                        recvonlineurl
+                        ), 
+                    shell = True,
+                    close_fds = True
+                    )
+            retcode = wgethandler.wait()
+            if retcode == 0:
+                print "download ok"
+            else:
+                print "download failed"
         except:
             import traceback
             traceback.print_exc()
@@ -500,10 +522,7 @@ class WebQQ(object):
         def sendrequest():
             response = ""
             try:
-                ckjar = cookielib.MozillaCookieJar("/tmp/cookies.txt")
-                cookiejar = urllib2.HTTPCookieProcessor(ckjar)
-                opener = urllib2.build_opener(cookiejar, WebqqHandler)
-                response = opener.open(getcfaceurl, timeout = 300).read()
+                response = self.requestwithcookie().open(getcfaceurl, timeout = 300).read()
                 try:
                     print json.loads(response) 
                     return False
@@ -517,8 +536,6 @@ class WebQQ(object):
                 textoutput(3, "qqurl://%s " % filename)    
                 return True
             except:
-                # import traceback
-                # traceback.print_exc()
                 return False
 
         for count in range(3):
@@ -593,8 +610,8 @@ class WebQQ(object):
                     result = response["result"]
                     for message in result:
                         poll_type, value = message["poll_type"], message["value"]
-                        self.logger.debug(poll_type)
-                        self.logger.debug(value)
+                        #self.logger.debug(poll_type)
+                        #self.logger.debug(value)
                         self.handler.dispatch(poll_type, value)
 
                 elif retcode == 102:
