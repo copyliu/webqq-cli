@@ -8,7 +8,7 @@ author: alex8224@gmail.com
 import urllib, urllib2, cookielib
 import json, time, os
 from urllib2 import BaseHandler
-import random
+import random, functools
 from hashlib import md5
 
 import logging,logging.config
@@ -23,6 +23,8 @@ import socket
 socket.setdefaulttimeout(300)
 import struct
 monkey.patch_all()
+import pynotify
+pynotify.init("webqq-cli")
 
 
 def getLogger():
@@ -46,9 +48,10 @@ def textoutput(msgtype, messagetext):
     else:
         getLogger().info(messagetext)
 
-import pynotify
 def notify(notifytext):
-    pynotify.Notification("通知", notifytext).show()
+    notifyins = pynotify.Notification("通知", notifytext, os.getcwd() + "/info.png")
+    notifyins.set_timeout(5000)
+    notifyins.show()
 
 class MsgCounter(object):
 
@@ -157,9 +160,33 @@ class MessageHandner(object):
             textoutput(2, "朋友 [%s] 发送文件 %s 给你" % (fromwho, filename))
             to, guid = str(message["from_uin"]), urllib.quote(filename)
             lcid = str(message["session_id"])
-            self.context.spawn(lcid, to, guid, filename, task = self.context.recvfile)
+
+            self.on_start_transfile(filename)
+            errcallback = functools.partial(self.on_transfailed, filename)
+            self.context.spawn(
+                    lcid, 
+                    to, 
+                    guid, 
+                    filename, 
+                    task = self.context.recvfile,
+                    linkok = self.on_end_transfile,
+                    linkfailed = errcallback
+                    )
+
         elif message["mode"] == "refuse":
             textoutput(2, "朋友 [%s] 取消了发送文件" % (fromwho, ))
+
+    def on_start_transfile(self, filename):
+        notify("正在接收文件 %s" % filename)
+
+    def on_end_transfile(self, filename):
+        notify("文件 %s 接收完成" % filename.get())
+
+    def on_transfailed(self, filename, result):
+        try:
+            notify("文件 %s 接收失败 " % filename)
+        except:
+            pass
 
     def on_push_offfile(self, message):
         print "收到了离线文件"
@@ -368,7 +395,7 @@ class WebQQ(object):
                 self.friendinfo[friend["uin"]] = friend["nick"]
     
     def build_groupinfo(self):
-        getgroupurl = "https://s.web2.qq.com/api/get_group_name_list_mask2"
+        getgroupurl = "http://s.web2.qq.com/api/get_group_name_list_mask2"
         encodeparams = "r=" + urllib.quote(json.dumps({"vfwebqq":self.vfwebqq}))
         response = self.sendpost(
                 getgroupurl,
@@ -425,7 +452,7 @@ class WebQQ(object):
 
     def login2(self):
         login2url = "http://d.web2.qq.com/channel/login2"
-        rdict = json.dumps({"status":"offline","ptwebqq":self.ptwebqq,\
+        rdict = json.dumps({"status":"online","ptwebqq":self.ptwebqq,\
                 "passwd_sig":"","clientid":self.clientid,"psessionid":None})
 
         encodeparams = "r="+urllib.quote(rdict)+"&clientid="+self.clientid+"&psessionid=null"
@@ -443,13 +470,10 @@ class WebQQ(object):
 
 
     def get_friends(self):
-        getfriendurl = "https://s.web2.qq.com/api/get_user_friends2"
-        encodeparams = "r=%7B%22h%22%3A%22hello%22%2C%22vfwebqq%22%3A%22"+self.vfwebqq+"%22%7D"
-        getfriendreq = urllib2.Request(getfriendurl, encodeparams)
-        getfriendreq.add_header("Referer","http://d.web2.qq.com/proxy.html?v=20110331002&callback=2")
-        getfriendreq.add_header("User-Agent","Mozilla/5.0 (X11; Linux i686; rv:16.0) Gecko/20100101 Firefox/16.0")
 
-        self.friends = json.loads(urllib2.urlopen(getfriendreq, timeout=120).read())
+        getfriendurl = "http://s.web2.qq.com/api/get_user_friends2"
+        encodeparams = "r=%7B%22h%22%3A%22hello%22%2C%22vfwebqq%22%3A%22"+self.vfwebqq+"%22%7D"
+        self.friends = self.sendpost(getfriendurl, encodeparams)
         self.build_userinfo()
 
         if self.friends["retcode"]!=0:
@@ -465,7 +489,7 @@ class WebQQ(object):
 
     def sendpost(self, url, message,headerdict=None, timeoutsecs=30):
         sendrequest = urllib2.Request(url, message)
-        sendrequest.add_header("Referer","http://d.web2.qq.com/proxy.html?v=20110331002&callback=1&id=2")
+        sendrequest.add_header("Referer",self.referurl)
         sendrequest.add_header("User-Agent","Mozilla/5.0 (X11; Linux i686; rv:16.0) Gecko/20100101 Firefox/16.0")
 
         if headerdict:
@@ -490,32 +514,26 @@ class WebQQ(object):
         recvonlineurl = "http://d.web2.qq.com/channel/get_file2?lcid=" + lcid + \
                 "&guid=" + guid+"&to=" + to + "&psessionid=" + self.psessionid + \
                 "&count=1&time=1349864752791&clientid=" + self.clientid
-        try:
-            notify("正在接受文件 %s" % filename)
-            import subprocess
-            filename = filename.replace("(","[").replace(")","]")
-            cmd = "wget -q -O %s --referer='%s' --cookies=on --load-cookies=%s --keep-session-cookies '%s'"
-            wgethandler = subprocess.Popen(
-                    cmd % (
-                        filename.decode("utf-8"), 
-                        self.referurl, 
-                        self.cookiesfile, 
-                        recvonlineurl
-                        ), 
-                    shell = True,
-                    close_fds = True
-                    )
-            retcode = wgethandler.wait()
-            if retcode == 0:
-                print "download ok"
-                notify("文件 %s 接收完成" % filename)
-            else:
-                notify("文件 %s 接收失败" % filename)
-                print "download failed"
-        except:
-            import traceback
-            traceback.print_exc()
-    
+        import subprocess
+        filename = filename.replace("(","[").replace(")","]")
+        cmd = "wget -q -O '%s' --referer='%s' --cookies=on --load-cookies=%s --keep-session-cookies '%s'"
+        wgethandler = subprocess.Popen(
+                cmd % (
+                    filename.decode("utf-8"), 
+                    self.referurl, 
+                    self.cookiesfile, 
+                    recvonlineurl
+                    ), 
+                shell = True,
+                close_fds = True
+                )
+        retcode = wgethandler.wait()
+        if retcode == 0:
+            print "download ok"
+            return filename
+        else:
+            raise WebQQException("file receive failed %s" % filename)
+
     def poll_online_friends(self):
         geturl = "http://d.web2.qq.com/channel/get_online_buddies2?clientid=%s&psessionid=%s&t=1349932882032"
         while 1:

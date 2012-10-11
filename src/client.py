@@ -54,7 +54,9 @@ class Chat(object):
         if cmd == "shake":
             self.sendto(SHAKEMESSAGE, param,'')
             self.lastfriend = param
-        
+        elif cmd == "to":
+            self.lastfriend = param
+
         elif cmd == "online":
             onlinecount = self.conn.llen("onlinefriends")
             for guy in self.conn.lrange("onlinefriends", 0, onlinecount):
@@ -66,7 +68,7 @@ class Chat(object):
             onlinecount = self.conn.llen("onlinefriends")
             for guy in self.conn.lrange("onlinefriends", 0, onlinecount):
                 if guy.startswith(param):
-                    print(Fore.GREEN + guy + Fore.RESET)
+                    print(Fore.YELLOW + guy + Fore.RESET)
 
         elif cmd == "quit":
             self.runflag = False
@@ -90,7 +92,7 @@ class Chat(object):
             tokens = remaintext.split()
             if prefix == "|":
                 to, body  = tokens[0], "".join(tokens[1:])
-                self.lastfriend = to
+                # self.lastfriend = to
             else:
                 to, body = self.lastfriend, "".join(tokens)
 
@@ -102,10 +104,9 @@ class Chat(object):
             else:
                 self.sendto(MESSAGE, to, body)    
 
-        else:
-            pass
-            
     def sendto(self, msgtype, to, message):
+        if not to or to == "":
+            return
         tolen, messagelen = len(to), len(message)
         bytemsg = ""
         if msgtype == MESSAGE or msgtype == GRPMESSAGE:
@@ -135,7 +136,7 @@ class Chat(object):
     def chat(self):
 
         while self.runflag:
-            message = raw_input("|%s%s%s_>: " % (Fore.GREEN,self.lastfriend,Fore.RESET))
+            message = raw_input("|%s%s%s_>$ " % (Fore.GREEN,self.lastfriend,Fore.RESET))
             self.parsecmd(message)
    
 if __name__ == '__main__':
