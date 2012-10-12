@@ -24,7 +24,6 @@ socket.setdefaulttimeout(300)
 import struct
 monkey.patch_all()
 import pynotify
-pynotify.init("webqq-cli")
 
 
 def getLogger():
@@ -48,10 +47,42 @@ def textoutput(msgtype, messagetext):
     else:
         getLogger().info(messagetext)
 
-def notify(notifytext):
-    notifyins = pynotify.Notification("通知", notifytext, os.getcwd() + "/info.png")
-    notifyins.set_timeout(5000)
-    notifyins.show()
+class NotifyOsd(object):
+    def __init__(self):
+        self.capabilities = {'actions':    False,
+        'body':                            False,
+        'body-hyperlinks':                 False,
+        'body-images':                     False,
+        'body-markup':                     False,
+        'icon-multi':                      False,
+        'icon-static':                     False,
+        'sound':                           False,
+        'image/svg+xml':                   False,
+        'x-canonical-private-synchronous': False,
+        'x-canonical-append':              False,
+        'x-canonical-private-icon-only':   False,
+        'x-canonical-truncation':          False}
+        self.initflag = False
+
+    def initCaps(self):
+        pynotify.init("webqq")
+        self.initflag = True
+        caps = pynotify.get_server_caps ()
+        if caps is None:
+            print "Failed to receive server caps."
+
+        for cap in caps:
+            self.capabilities[cap] = True        
+
+
+    def notify(self, notifytext):
+
+        if not self.initflag:
+            self.initCaps()
+        notifyins = pynotify.Notification("通知", notifytext, os.getcwd() + "/info.png")
+        notifyins.show()
+
+notifyer = NotifyOsd()
 
 class MsgCounter(object):
 
@@ -147,7 +178,7 @@ class MessageHandner(object):
         import qqsetting
         if fromwho in qqsetting.CARE_FRIENDS:
             textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
-            notify("%s %s" % (fromwho, status))
+            notifyer.notify("%s %s" % (fromwho, status))
 
     def on_input_notify(self, message):
         fromwho = self.context.get_user_info(message["from_uin"])
@@ -177,14 +208,14 @@ class MessageHandner(object):
             textoutput(2, "朋友 [%s] 取消了发送文件" % (fromwho, ))
 
     def on_start_transfile(self, filename):
-        notify("正在接收文件 %s" % filename)
+        notifyer.notify("正在接收文件 %s" % filename)
 
     def on_end_transfile(self, filename):
-        notify("文件 %s 接收完成" % filename.get())
+        notifyer.notify("文件 %s 接收完成" % filename.get())
 
     def on_transfailed(self, filename, result):
         try:
-            notify("文件 %s 接收失败 " % filename)
+            notifyer.notify("文件 %s 接收失败 " % filename)
         except:
             pass
 
