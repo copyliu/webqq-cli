@@ -5,6 +5,8 @@ webqq-cli v0.1
 author: alex8224@gmail.com
 
 '''
+
+import qqsetting
 import urllib, urllib2, cookielib
 import json, time, os
 from urllib2 import BaseHandler
@@ -75,11 +77,12 @@ class NotifyOsd(object):
             self.capabilities[cap] = True        
 
 
-    def notify(self, notifytext):
+    def notify(self, notifytext, timeout = 3, icon = None, title = "通知"):
 
         if not self.initflag:
             self.initCaps()
-        notifyins = pynotify.Notification("通知", notifytext, os.getcwd() + "/info.png")
+        notifyins = pynotify.Notification(title, notifytext, icon)
+        notifyins.set_timeout(timeout*1000)
         notifyins.show()
 
 notifyer = NotifyOsd()
@@ -146,6 +149,13 @@ class MessageHandner(object):
             sendtime, fromwho,  "".join(messagebody).encode("utf-8")
             ))
 
+        notifyer.notify(
+                "".join(messagebody).encode("utf-8"), 
+                title = fromwho, 
+                timeout= 3,
+                icon = self.context.getface(message["from_uin"])
+                )
+
     def on_group_message(self, message):
         groupcode, fromwho, mess = message["group_code"], \
                 self.context.get_user_info(message["send_uin"]), \
@@ -175,10 +185,11 @@ class MessageHandner(object):
 
     def on_buddies_status_change(self, message):
         fromwho, status = self.context.get_user_info(message["uin"]), message["status"].encode("utf-8")
-        import qqsetting
+        reload(qqsetting)
         if fromwho in qqsetting.CARE_FRIENDS:
-            textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
-            notifyer.notify("%s %s" % (fromwho, status))
+        # textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
+            faceuri = self.context.getface(message["uin"])
+            notifyer.notify("%s %s" % (fromwho, status), timeout = 2, icon = faceuri)
 
     def on_input_notify(self, message):
         fromwho = self.context.get_user_info(message["from_uin"])
@@ -402,6 +413,7 @@ class WebQQ(object):
         self.fakeid = ""
         self.friends = None
         self.friendindex = 1
+        self.uintoqq = {}
         self.referurl = "http://d.web2.qq.com/proxy.html?v=20110331002&callback=1&id=2"
 
         self.mq = queue.Queue(20)
@@ -418,12 +430,14 @@ class WebQQ(object):
             self.redisconn.lpush("friends", friend["markname"])
             self.friendinfo[friend["markname"]] = friend["uin"]
             self.friendinfo[friend["uin"]] = friend["markname"]
+            # self.uintoqq["uin"] = self.getqqnumber(friend["uin"])
         
         for friend in self.friends["result"]["info"]:
             if not self.friendinfo.has_key(friend["uin"]):
                 self.redisconn.lpush("friends", friend["nick"])
                 self.friendinfo[friend["nick"]] = friend["uin"]
                 self.friendinfo[friend["uin"]] = friend["nick"]
+                # self.uintoqq["uin"] = self.getqqnumber(friend["uin"])
     
     def build_groupinfo(self):
         getgroupurl = "http://s.web2.qq.com/api/get_group_name_list_mask2"
@@ -587,7 +601,6 @@ class WebQQ(object):
         getcfaceurl = "http://d.web2.qq.com/channel/get_cface2?lcid="+ lcid +\
                 "&guid=" + guid + "&to=" + to + "&count=5&time=1&clientid=" + \
                 self.clientid + "&psessionid=" + self.psessionid
-        # self.getface(to)
         def sendrequest():
             response = ""
             try:
@@ -613,19 +626,38 @@ class WebQQ(object):
                 self.logger.debug("retry downcface %d times"  % count)
             gevent.sleep(0)    
 
-    def getface(self, uin):
-        face = "%s.jpg" % uin
-        if os.path.exists(face):
-            return face
+    def getqqnumber(self, uin):
 
-        getfaceurl = "http://face4.qun.qq.com/cgi/svr/face/getface?cache=0&type=1&fid=0&uin=%s&vfwebqq=%s"
+        qqnumber = self.uintoqq.get(uin, None)
+        if qqnumber:
+            return qqnumber
+
+        geturl = "http://s.web2.qq.com/api/get_friend_uin2?tuin=%s&verifysession=&type=1&code=&vfwebqq=%s&t=%s"
         try:
-            response = self.requestwithcookie().open(getfaceurl % (uin, self.vfwebqq)).read()
-            with open(face, "w") as facefile:
-                facefile.write(response)
-            return face    
-        except:
+            geturl = geturl % (uin, self.vfwebqq, str(time.time()))
+            response = self.sendget(geturl)
+            if response["retcode"] == 0:
+                qqnumber = response["result"]["account"]
+                self.uintoqq[uin] = qqnumber
+                return qqnumber
+        except Exception:
             pass
+
+    def getface(self, uin):
+        qqnumber = self.getqqnumber(uin)
+        if qqnumber:
+            face = "%s/%s.jpg" % (os.getcwd(), qqnumber)
+            if os.path.exists(face):
+                return face
+
+            getfaceurl = "http://face4.qun.qq.com/cgi/svr/face/getface?cache=0&type=1&fid=0&uin=%s&vfwebqq=%s"
+            try:
+                response = self.opener.open(getfaceurl % (uin, self.vfwebqq)).read()
+                with open(face, "w") as facefile:
+                    facefile.write(response)
+                return face    
+            except:
+                pass
 
     def downoffpic(self, url, fromuin):
         getoffpicurl = "http://d.web2.qq.com/channel/get_offpic2?file_path=" + \
