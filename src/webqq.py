@@ -27,6 +27,9 @@ import struct
 monkey.patch_all()
 import pynotify
 
+def rmfile(filepath):
+    if os.path.exists(filepath):
+        os.unlink(filepath)
 
 def getLogger():
     logging.config.fileConfig(os.path.join(os.getcwd(),"chatloggin.conf"))
@@ -181,13 +184,13 @@ class MessageHandner(object):
 
     def on_kick_message(self, message):
         self.context.logger.info("当前账号已经在别处登陆！")
+        notifyer.notify("当前账号已经在别处登陆！")
         self.context.stop()
 
     def on_buddies_status_change(self, message):
         fromwho, status = self.context.get_user_info(message["uin"]), message["status"].encode("utf-8")
         reload(qqsetting)
         if fromwho in qqsetting.CARE_FRIENDS:
-        # textoutput(2, "用户 [%s] 在线状态变为 ,%s" % (fromwho, status))
             faceuri = self.context.getface(message["uin"])
             notifyer.notify("%s %s" % (fromwho, status), timeout = 2, icon = faceuri)
 
@@ -230,9 +233,27 @@ class MessageHandner(object):
         except:
             pass
 
+    def __downofflinefile(self, url, filename):
+        rmfile(filename)
+        cmd = "wget -q -O '%s' '%s'" % (filename, url)
+        import subprocess
+        retcode = subprocess.Popen(cmd, shell = True, close_fds = True, stdout = subprocess.PIPE).wait()
+        if retcode == 0:
+            notifyer.notify("离线文件 %s 下载完成 " % filename)
+        else:
+            notifyer.notify("离线文件 %s 下载失败" % filename)
+            rmfile(filename)
+
     def on_push_offfile(self, message):
-        print "收到了离线文件"
-        pass
+        rkey, ip, port = message["rkey"], message["ip"], message["port"]
+        fromwho = self.context.get_user_info(message["from_uin"])
+        filename = message["name"]
+        downurl = "http://%s:%d/%s?ver=2173&rkey=%s" % (ip, port, filename, rkey)
+        notifyer.notify("开始接受 %s 发来的离线文件 %s" % (fromwho, filename))
+        self.context.spawn(
+                downurl, 
+                filename,
+                task = self.__downofflinefile)
 
 class QQMessage(object):
 
@@ -563,7 +584,7 @@ class WebQQ(object):
         cmd = "wget -q -O '%s' --referer='%s' --cookies=on --load-cookies=%s --keep-session-cookies '%s'"
         wgethandler = subprocess.Popen(
                 cmd % (
-                    filename.decode("utf-8"), 
+                    qqsetting.FILEDIR + "/" + filename.decode("utf-8"), 
                     self.referurl, 
                     self.cookiesfile, 
                     recvonlineurl
@@ -573,7 +594,6 @@ class WebQQ(object):
                 )
         retcode = wgethandler.wait()
         if retcode == 0:
-            print "download ok"
             return filename
         else:
             raise WebQQException("file receive failed %s" % filename)
@@ -610,11 +630,11 @@ class WebQQ(object):
                 except:
                     pass
 
-                filename = "/tmp/%s" % guid
+                filename = os.getcwd() + "/" + qqsetting.FILEDIR + "/" + guid
                 with open(filename, "w") as cface:
                     cface.write(response)
 
-                textoutput(3, "qqurl://%s " % filename)    
+                textoutput(3, "file://%s " % filename)    
                 return True
             except:
                 return False
@@ -645,7 +665,7 @@ class WebQQ(object):
     def getface(self, uin):
         qqnumber = self.getqqnumber(uin)
         if qqnumber:
-            face = "%s/%s.jpg" % (os.getcwd(), qqnumber)
+            face = "%s/%s.jpg" % (os.getcwd()+"/"+qqsetting.FACEDIR, qqnumber)
             if os.path.exists(face):
                 return face
 
@@ -665,11 +685,11 @@ class WebQQ(object):
         try:
 
             response = self.opener.open(getoffpicurl).read()
-            filename = "/tmp/" + url[1:] + ".jpg"
+            filename = os.getcwd() + "/" + qqsetting.FILEDIR + "/" + url[1:] + ".jpg"
             with open(filename, "w") as offpic:
                 offpic.write(response)
 
-            textoutput(3, "qqurl://%s " % filename)    
+            textoutput(3, "file://%s " % filename)    
 
         except:
             import traceback
@@ -724,8 +744,6 @@ class WebQQ(object):
                     result = response["result"]
                     for message in result:
                         poll_type, value = message["poll_type"], message["value"]
-                        #self.logger.debug(poll_type)
-                        #self.logger.debug(value)
                         self.handler.dispatch(poll_type, value)
 
                 elif retcode == 102:
