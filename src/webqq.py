@@ -430,14 +430,13 @@ class WebQQ(object):
             self.redisconn.lpush("friends", friend["markname"])
             self.friendinfo[friend["markname"]] = friend["uin"]
             self.friendinfo[friend["uin"]] = friend["markname"]
-            # self.uintoqq["uin"] = self.getqqnumber(friend["uin"])
         
         for friend in self.friends["result"]["info"]:
             if not self.friendinfo.has_key(friend["uin"]):
                 self.redisconn.lpush("friends", friend["nick"])
                 self.friendinfo[friend["nick"]] = friend["uin"]
                 self.friendinfo[friend["uin"]] = friend["nick"]
-                # self.uintoqq["uin"] = self.getqqnumber(friend["uin"])
+        
     
     def build_groupinfo(self):
         getgroupurl = "http://s.web2.qq.com/api/get_group_name_list_mask2"
