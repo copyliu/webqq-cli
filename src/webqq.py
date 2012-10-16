@@ -270,7 +270,7 @@ class QQMessage(object):
         self.psessionid = psessionid
         r=json.dumps({"to":self.to,"face":570,\
                 "content":"[\""+self.messagetext+\
-                "\\n\",[\"font\",\
+                "\",[\"font\",\
                 {\"name\":\"宋体\",\"size\":\"10\",\"style\":[0,0,0],\"color\":\"000000\"}]]",\
                 "msg_id":MessageIndex.get(),"clientid":self.clientid,"psessionid":self.psessionid\
                 })
