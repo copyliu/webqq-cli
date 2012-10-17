@@ -31,9 +31,18 @@ def rmfile(filepath):
     if os.path.exists(filepath):
         os.unlink(filepath)
 
-def getLogger():
+def formatdate(millseconds):
+    return time.strftime(
+            "%Y-%m-%d %H:%M:%S",
+            time.localtime(long(millseconds))
+            )
+
+def getLogger(loggername = "root"):
     logging.config.fileConfig(os.path.join(os.getcwd(),"chatloggin.conf"))
     return logging.getLogger()
+
+def ctime():
+    return str(int(time.time()))
 
 def textoutput(msgtype, messagetext):
     import re
@@ -114,91 +123,105 @@ class MessageHandner(object):
     对消息进行处理
     '''
     def __init__(self, context):
+
         self.context = context
+        self.logger = getLogger(loggername = "buddies_status")
 
     def dispatch(self, msgtype, message):
+
         prefixmethod = "on_" + msgtype
         method = getattr(self, prefixmethod) if hasattr(self, prefixmethod) else None
 
         if method:
             method(message)
-        
-    def on_message(self, message):
-        fromwho, mess = self.context.get_user_info(
-                message["from_uin"]), message["content"][1:]
 
-        sendtime = time.strftime("%Y-%m-%d %H:%M:%S",\
-                time.localtime(long(message["time"])))
+    def __joinmessage(self, message):
 
-        messagebody = map(lambda item:\
+        messagebody = "".join(map(lambda item:\
                 ":face"+str(item[1])+": " \
-                if isinstance(item, list) else item, mess)
+                if isinstance(item, list) else item, message))
+        return messagebody.encode("utf-8")
 
+    def on_message(self, message):
+
+        fromwho = self.context.get_user_info(message["from_uin"])
+        mess = message["content"][1:]
+
+        sendtime = formatdate(message["time"])
+
+        messagebody = self.__joinmessage(mess)
         for msg in mess:
             if isinstance(msg, list):
                 msgtype = msg[0]
                 if msgtype == "offpic":
                     content = msg[1]
                     picpath = content["file_path"]
+
                     self.context.spawn(
-                            picpath, str(message["from_uin"]), \
+                            picpath, 
+                            str(message["from_uin"]), 
                             task = self.context.downoffpic
                             )
+
                 if msgtype == "cface":    
                     to, guid, unknown  = str(message["from_uin"]), msg[1], msg[2]
                     self.context.spawn(to, guid, task = self.context.downcface)
 
-        textoutput(1, "%s [%s] 说 %s" % (
-            sendtime, fromwho,  "".join(messagebody).encode("utf-8")
-            ))
 
         notifyer.notify(
                 "".join(messagebody).encode("utf-8"), 
                 title = fromwho, 
-                timeout= 3,
+                timeout= 5,
                 icon = self.context.getface(message["from_uin"])
                 )
 
+        textoutput(1,"%s [%s] 说 %s" % (sendtime, fromwho, messagebody))
+
     def on_group_message(self, message):
-        groupcode, fromwho, mess = message["group_code"], \
-                self.context.get_user_info(message["send_uin"]), \
-                message["content"][1:]
 
-        sendtime = time.strftime("%Y-%m-%d %H:%M:%S",\
-                time.localtime(long(message["time"])))
+        groupcode = message["group_code"] 
+        fromwho = self.context.get_user_info(message["send_uin"]) 
+        mess = message["content"][1:]
 
-        messagebody = map(lambda item:\
-                ":face"+str(item[1])+": " \
-                if isinstance(item, list) else item, mess)
+        sendtime = formatdate(message["time"])
 
-        textoutput(3, "群%s [中%s] 说 %s" % (\
-                self.context.get_groupname_by_code(groupcode),\
-                fromwho, sendtime + " " \
-                +"".join(messagebody).encode("utf-8")\
-                ))
+        messagebody = self.__joinmessage(mess)
+        messagebody = "群%s [中%s] 说 %s" % (
+                self.context.get_groupname_by_code(groupcode),
+                fromwho,
+                sendtime + " " + messagebody
+                )
+
+        textoutput(3,messagebody) 
 
     def on_shake_message(self, message):
+
         fromwho = self.context.get_user_info(message["from_uin"])
         textoutput(3, "朋友 [%s] 给你发送一个窗口抖动 :)" % fromwho)
         self.context.write_message(ShakeMessage(message["from_uin"]))
 
     def on_kick_message(self, message):
+
         self.context.logger.info("当前账号已经在别处登陆！")
         notifyer.notify("当前账号已经在别处登陆！")
         self.context.stop()
 
     def on_buddies_status_change(self, message):
+
         fromwho, status = self.context.get_user_info(message["uin"]), message["status"].encode("utf-8")
         reload(qqsetting)
         if fromwho in qqsetting.CARE_FRIENDS:
             faceuri = self.context.getface(message["uin"])
-            notifyer.notify("%s %s" % (fromwho, status), timeout = 2, icon = faceuri)
+            logmessage = "%s %s" % (fromwho, status)
+            notifyer.notify(logmessage, timeout = 2, icon = faceuri)
 
     def on_input_notify(self, message):
+
         fromwho = self.context.get_user_info(message["from_uin"])
         textoutput(3, "朋友 [%s] 正在打字......" % fromwho)
 
     def on_file_message(self, message):
+
         fromwho = self.context.get_user_info(message["from_uin"])
         if message["mode"] == 'recv':
             filename = message["name"].encode("utf-8")
@@ -284,17 +307,11 @@ class QQMessage(object):
         pass
 
     def sendFailed(self, result):
-        # try:
-            # result.get()
-        # except Exception:
-        # print "send %s failed" % str(self)
-
         if self.retrycount <3:
             self.context.write_message(self)
             self.retrycount+=1
         elif self.retrycount==3:
             print str(self), "发送失败"
-
 
     def send(self, context, clientid, psessionid):
         qqrawmsg = self.encode(clientid, psessionid)
@@ -306,6 +323,58 @@ class QQMessage(object):
 
     def __str__(self):
         return "send qq message to %s, message = %s\n" % (self.to, self.messagetext)
+
+class ImageMessage(QQMessage):
+    '''发送图片'''
+    
+    def __init__(self, to, imagefile, context = None):
+        super(ImageMessage, self).__init__(to, "", context)
+        self.context = context
+        self.imagefile = imagefile
+
+    def uploadpic(self):
+        uploadurl = "http://weboffline.ftn.qq.com/ftn_access/upload_offline_pic?time="+ctime()
+        formdata = {
+                "skey"            : self.context.skey,
+                "callback"        : "parent.EQQ.Model.ChatMsg.callbackSendPic",
+                "locallangid"     : 2052,
+                "clientversion"   : 1409,
+                "uin"             : self.context.qq,
+                "appid"           : 1002101,
+                "peeruin"         : self.to,
+                "fileid"          : 1,
+                "vfwebqq"         : self.context.vfwebqq,
+                "senderviplevel"  : 0,
+                "reciverviplevel" : 0,
+                "filename"        : os.path.basename(self.imagefile)
+                }
+       
+        self.formdata = " ".join(("--form-string '" + k +"="+str(v) + "'" for k, v in formdata.iteritems()))
+        import subprocess
+        uploadhandler = subprocess.Popen("curl -s %s -F 'file=@%s' '%s'" % (self.formdata, self.imagefile, uploadurl),
+                stdout = subprocess.PIPE,
+                shell = True,
+                close_fds = True
+                )
+        retcode = uploadhandler.wait()
+        if retcode == 0:
+            response = uploadhandler.stdout.read()
+            jsonstart,jsonend = response.find("{"), response.find("}")+1
+            return json.loads(response[jsonstart:jsonend])
+
+    def encode(self, clientid, psessionid):
+        clientid = clientid
+        psessionid = psessionid
+        upinfo= self.uploadpic()
+        picpath,picname,picsize = upinfo["filepath"], upinfo["filename"], str(upinfo["filesize"])
+        r=json.dumps({"to":self.to,"face":570,\
+                "content":"[[\"offpic\",\""+picpath+"\",\""+picname+"\","+picsize+"], \""+self.messagetext+\
+                "\",[\"font\",\
+                {\"name\":\"宋体\",\"size\":\"10\",\"style\":[0,0,0],\"color\":\"000000\"}]]",\
+                "msg_id":MessageIndex.get(),"clientid":clientid,"psessionid":psessionid\
+                })
+
+        return "r="+urllib.quote(r)+"&clientid="+clientid+"&psessionid="+psessionid
 
 class GroupMessage(QQMessage):
     '''
@@ -323,7 +392,6 @@ class GroupMessage(QQMessage):
                 "msg_id":MessageIndex.get(),"clientid":clientid,"psessionid":psessionid\
                 })
         return "r="+urllib.quote(rdict)+"&clientid="+clientid+"&psessionid="+psessionid
-
 
     def __str__(self):
         return "send group message %s to %s " % (self.messagetext, self.to)
@@ -415,6 +483,12 @@ class MessageFactory(object):
         if msgtype == 4:
             return LogoutMessage()
 
+        if msgtype == 5:
+            tolen, bodylen = struct.unpack("ii", message[4:12])
+            to, body = struct.unpack("%ss%ss" % (tolen, bodylen), message[12:])
+            uin = webcontext.get_uin_by_name(to)
+            return ImageMessage(uin, body.decode("utf-8"), context = webcontext)
+
 class WebQQ(object):
 
     def __init__(self, qqno, qqpwd, handler=None):
@@ -501,6 +575,8 @@ class WebQQ(object):
         self.opener.open(login1url)
         self.ckjar.save()
         self.ptwebqq = self.ckjar._cookies[".qq.com"]["/"]["ptwebqq"].value
+        self.uincode = self.ckjar._cookies[".qq.com"]["/"]["uin"].value[1:]
+        self.skey = self.ckjar._cookies[".qq.com"]["/"]["skey"].value
         return self
 
     def login(self):
@@ -526,7 +602,7 @@ class WebQQ(object):
         if response["retcode"] !=0:
             raise WebQQException("login2 failed! errcode=%s, errmsg=%s"\
                     % (response["retcode"], response["errmsg"]))
-
+        
         self.vfwebqq = response["result"]["vfwebqq"]
         self.psessionid = response["result"]["psessionid"]
         self.fakeid = response["result"]["uin"]
@@ -762,8 +838,12 @@ class WebQQ(object):
 
         while self.runflag:
             try:
-                gevent.sleep(60)
                 KeepaliveMessage().send(self)
+                # uin = self.get_uin_by_name("api测试")
+                # uploadmess = ImageMessage(uin,"/home/alex/space-05.jpg")
+                # uploadmess.context = self
+                # uploadmess.send(self, self.clientid, self.psessionid)
+                gevent.sleep(60)
             except greenlet.GreenletExit:
                 self.logger.info("Keepalive exitting......")
                 break
@@ -788,13 +868,13 @@ class WebQQ(object):
     def start(self):
 
         self.runflag = True
+        self.installsignal()
         self.login().login1().login2().get_friends().build_groupinfo()
         self.taskpool.spawn(self.send_message)
         self.taskpool.spawn(self.poll_message)
         self.taskpool.spawn(self.keepalive)
         self.taskpool.spawn(self.poll_online_friends)
 
-        self.installsignal()
         self.taskpool.join()
     
     def stop(self):

@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding:utf-8 -*-
 
 from redis import Redis
@@ -22,6 +23,7 @@ from colorama import Fore
 |            | 2. 窗口抖动消息        |
 |            | 3. 群消息              |
 |            | 4. 注销消息            | 
+|            | 5. 图片消息            | 
 +============+========================+
 | int32      | 消息接受者长度         |
 +------------+------------------------+
@@ -42,6 +44,7 @@ from colorama import Fore
 MESSAGE = 1
 SHAKEMESSAGE = 2
 GRPMESSAGE = 3
+IMAGEMESSAGE = 5
 
 class Chat(object):
 
@@ -69,6 +72,12 @@ class Chat(object):
             for guy in self.conn.lrange("onlinefriends", 0, onlinecount):
                 if guy.startswith(param):
                     print(Fore.YELLOW + guy + Fore.RESET)
+
+        elif cmd == "image":
+            if self.lastfriend and param:
+                self.sendto(IMAGEMESSAGE, self.lastfriend, param)
+            else:
+                print(Fore.RED+"请先选择朋友或输入图像路径"+Fore.RESET)
 
         elif cmd == "quit":
             self.runflag = False
@@ -109,7 +118,7 @@ class Chat(object):
             return
         tolen, messagelen = len(to), len(message)
         bytemsg = ""
-        if msgtype == MESSAGE or msgtype == GRPMESSAGE:
+        if msgtype == MESSAGE or msgtype == GRPMESSAGE or msgtype == IMAGEMESSAGE:
             bytemsg = struct.pack("iii%ss%ss" % (tolen, messagelen), msgtype, tolen, messagelen, to, message)
         elif msgtype == SHAKEMESSAGE:
             bytemsg = struct.pack("ii%ss" % tolen, msgtype, tolen, to)
@@ -118,26 +127,27 @@ class Chat(object):
 
     def getfriends(self):
 
-        friendsinfo = self.conn.lrange("friends",0 ,self.conn.llen("friends"))
-        groupsinfo = self.conn.lrange("groups", 0, self.conn.llen("groups"))
-        friendsinfo.extend(groupsinfo)
-
-        def completer(prefix, index):
-            matches = [friend for friend in friendsinfo if friend.startswith(prefix)]
-            try:
-                return matches[index]
-            except IndexError:
-                pass
-
-        readline.set_completer(completer)
-        readline.parse_and_bind("tab:complete")
+        self.friendsinfo = self.conn.lrange("friends",0 ,self.conn.llen("friends"))
+        self.groupsinfo = self.conn.lrange("groups", 0, self.conn.llen("groups"))
+        self.friendsinfo.extend(self.groupsinfo)
         return self
+
+    def completer(self, prefix, index):
+        matches = [friend for friend in self.friendsinfo if friend.startswith(prefix)]
+        try:
+            return matches[index]
+        except IndexError:
+            pass
 
     def chat(self):
 
+        readline.parse_and_bind("tab:complete")
+        readline.set_completer(self.completer)
         while self.runflag:
             message = raw_input("|%s%s%s_>$ " % (Fore.GREEN,self.lastfriend,Fore.RESET))
             self.parsecmd(message)
+            print("")
    
 if __name__ == '__main__':
+
     Chat().getfriends().chat()
