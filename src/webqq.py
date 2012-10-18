@@ -854,10 +854,6 @@ class WebQQ(object):
         while self.runflag:
             try:
                 KeepaliveMessage().send(self)
-                # uin = self.get_uin_by_name("api测试")
-                # uploadmess = ImageMessage(uin,"/home/alex/space-05.jpg")
-                # uploadmess.context = self
-                # uploadmess.send(self, self.clientid, self.psessionid)
                 gevent.sleep(60)
             except greenlet.GreenletExit:
                 self.logger.info("Keepalive exitting......")
