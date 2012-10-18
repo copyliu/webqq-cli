@@ -144,7 +144,7 @@ class Chat(object):
         readline.parse_and_bind("tab:complete")
         readline.set_completer(self.completer)
         while self.runflag:
-            message = raw_input("|%s%s%s_>$ " % (Fore.GREEN,self.lastfriend,Fore.RESET))
+            message = raw_input("=>%s: " % (self.lastfriend))
             self.parsecmd(message)
             print("")
    
