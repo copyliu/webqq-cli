@@ -44,6 +44,9 @@ def getLogger(loggername = "root"):
 def ctime():
     return str(int(time.time()))
 
+def localetime():
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
 def textoutput(msgtype, messagetext):
     import re
     highlightre = re.match('(.+ )\[(.+)\](.+)', messagetext)
@@ -57,6 +60,9 @@ def textoutput(msgtype, messagetext):
             getLogger().info(Fore.BLUE + who + Fore.RESET + message)
         if msgtype == 3:
            getLogger().info(Fore.GREEN + prefix + Fore.RED + who + Fore.RESET + message)
+
+        if msgtype == 4:
+            getLogger().info(Fore.YELLOW + prefix + who + Fore.GREEN+ message + Fore.RESET)
 
     else:
         getLogger().info(messagetext)
@@ -315,6 +321,7 @@ class QQMessage(object):
 
     def send(self, context, clientid, psessionid):
         qqrawmsg = self.encode(clientid, psessionid)
+
         return context.spawn(self.url, \
                 qqrawmsg,
                 task = context.sendpost,
@@ -351,7 +358,9 @@ class ImageMessage(QQMessage):
        
         self.formdata = " ".join(("--form-string '" + k +"="+str(v) + "'" for k, v in formdata.iteritems()))
         import subprocess
-        uploadhandler = subprocess.Popen("curl -s %s -F 'file=@%s' '%s'" % (self.formdata, self.imagefile, uploadurl),
+        cmd = "curl -s %s -F 'file=@%s' '%s'" % (self.formdata, self.imagefile, uploadurl)
+        uploadhandler = subprocess.Popen(
+                cmd,
                 stdout = subprocess.PIPE,
                 shell = True,
                 close_fds = True
@@ -361,11 +370,15 @@ class ImageMessage(QQMessage):
             response = uploadhandler.stdout.read()
             jsonstart,jsonend = response.find("{"), response.find("}")+1
             return json.loads(response[jsonstart:jsonend])
+        else:
+            print cmd
+            print uploadhandler.stdout.read()
 
     def encode(self, clientid, psessionid):
         clientid = clientid
         psessionid = psessionid
         upinfo= self.uploadpic()
+
         picpath,picname,picsize = upinfo["filepath"], upinfo["filename"], str(upinfo["filesize"])
         r=json.dumps({"to":self.to,"face":570,\
                 "content":"[[\"offpic\",\""+picpath+"\",\""+picname+"\","+picsize+"], \""+self.messagetext+\
@@ -465,6 +478,8 @@ class MessageFactory(object):
             tolen, bodylen = struct.unpack("ii", message[4:12])
             to, body = struct.unpack("%ss%ss" % (tolen, bodylen), message[12:])
             uin = webcontext.get_uin_by_name(to)
+            sendtime = localetime()
+            textoutput(4,"%s [对%s] 说 %s" % (sendtime, to, body))
             return QQMessage(uin, body.decode("utf-8"), context = webcontext)
 
         if msgtype == 2:
