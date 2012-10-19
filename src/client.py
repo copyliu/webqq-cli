@@ -2,12 +2,9 @@
 # -*- coding:utf-8 -*-
 
 from redis import Redis
-import struct
-import readline
-import re
+import struct, readline, re
 
-import colorama
-colorama.init()
+import colorama;colorama.init()
 from colorama import Fore
 
 '''

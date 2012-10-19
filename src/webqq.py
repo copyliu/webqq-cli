@@ -751,9 +751,9 @@ class WebQQ(object):
                 response = self.requestwithcookie().open(url).read()
                 return json.loads(response)
             except ValueError:
-                pass
+                raise WebQQException("json format error")
             except BadStatusLine:
-                pass
+                raise WebQQException("http statu code error")
 
     def recvfile(self, lcid, to, guid, filename):
         recvonlineurl = "http://d.web2.qq.com/channel/get_file2?lcid=" + lcid + \
@@ -787,7 +787,7 @@ class WebQQ(object):
                 gevent.sleep(60)
                 onlineguys = self.sendget(geturl % (self.clientid, self.psessionid))
                 retcode, result = onlineguys["retcode"], onlineguys["result"]
-                if retcode == 0 and len(result)>0:
+                if retcode == 0 and result:
                     batch = self.redisconn.pipeline(transaction = False)
                     self.redisconn.delete("onlinefriends")
                     for guy in result:
@@ -797,7 +797,7 @@ class WebQQ(object):
                                 )
                     batch.execute()
 
-            except urllib2.URLError:
+            except WebQQException:
                 pass
             except greenlet.GreenletExit:
                 break
@@ -850,7 +850,8 @@ class WebQQ(object):
                 self.uintoqq[uin] = qqnumber
                 return qqnumber
         except Exception:
-            pass
+            import traceback;traceback.print_exc()
+            
 
     def getface(self, uin):
         qqnumber = self.getqqnumber(uin)
@@ -991,13 +992,13 @@ class WebQQ(object):
     def start(self):
 
         self.runflag = True
-        self.installsignal()
         self.login().login1().login2().get_friends().build_groupinfo()
         self.taskpool.spawn(self.send_message)
         self.taskpool.spawn(self.poll_message)
         self.taskpool.spawn(self.keepalive)
         self.taskpool.spawn(self.poll_online_friends)
 
+        self.installsignal()
         self.taskpool.join()
     
     def stop(self):
