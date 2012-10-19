@@ -6,26 +6,18 @@ author: alex8224@gmail.com
 
 '''
 
-import qqsetting
 import urllib, urllib2, cookielib
-import json, time, os
 from urllib2 import BaseHandler
-import random, functools
-from hashlib import md5
-
+import random, json, time, os
 import logging,logging.config
 
-from colorama import init
-init()
+from colorama import init;init()
 from colorama import Fore
 
 import gevent, greenlet
-from gevent import monkey, queue, pool
-import socket
-socket.setdefaulttimeout(300)
-import struct
-monkey.patch_all()
-import pynotify
+from gevent import monkey, queue, pool;monkey.patch_all()
+import struct, pynotify
+import qqsetting
 
 def rmfile(filepath):
     if os.path.exists(filepath):
@@ -271,15 +263,13 @@ class MessageHandner(object):
             lcid = str(message["session_id"])
 
             self.on_start_transfile(filename)
-            errcallback = functools.partial(self.on_transfailed, filename)
             self.context.spawn(
                     lcid, 
                     to, 
                     guid, 
                     filename, 
                     task = self.context.recvfile,
-                    linkok = self.on_end_transfile,
-                    linkfailed = errcallback
+                    linkok = self.on_end_transfile
                     )
 
         elif message["mode"] == "refuse":
@@ -288,14 +278,12 @@ class MessageHandner(object):
     def on_start_transfile(self, filename):
         notifyer.notify("正在接收文件 %s" % filename)
 
-    def on_end_transfile(self, filename):
-        notifyer.notify("文件 %s 接收完成" % filename.get())
-
-    def on_transfailed(self, filename, result):
-        try:
+    def on_end_transfile(self, result):
+        filename = result.get()
+        if filename:
+            notifyer.notify("文件 %s 接收完成" % filename)
+        else:
             notifyer.notify("文件 %s 接收失败 " % filename)
-        except:
-            pass
 
     def __downofflinefile(self, url, filename):
         rmfile(filename)
@@ -327,7 +315,7 @@ class MessageHandner(object):
 
 class QQMessage(object):
 
-    def __init__(self, to, messagetext, context=None):
+    def __init__(self, to, messagetext, context = None):
         self.msgtype = 1
         self.to = to 
         self.messagetext = messagetext.encode("utf-8")
@@ -336,12 +324,16 @@ class QQMessage(object):
         self.url = "https://d.web2.qq.com/channel/send_buddy_msg2"
     
     def encode(self, clientid, psessionid):
-        r=json.dumps({"to":self.to,"face":570,\
-                "content":"[\"" + self.messagetext + \
-                "\",[\"font\",\
-                {\"name\":\"宋体\",\"size\":\"10\",\"style\":[0,0,0],\"color\":\"000000\"}]]",\
-                "msg_id":MessageIndex.get(),"clientid":clientid,"psessionid":psessionid\
-                })
+        content = '''["%s",[]]'''
+        r = json.dumps(
+                {
+                    "to":self.to,
+                    "face":570,
+                    "content":content % self.messagetext,
+                    "msg_id":MessageIndex.get(),
+                    "clientid":clientid,
+                    "psessionid":psessionid
+                } )
 
         rdict = urllib.quote(r)
         return "r=%s&clientid=%s&psessionid=%s" % (rdict, clientid, psessionid)
@@ -427,21 +419,23 @@ class ImageMessage(QQMessage):
             print uploadhandler.stdout.read()
 
     def encode(self, clientid, psessionid):
-        clientid = clientid
-        psessionid = psessionid
         upinfo= self.uploadpic()
         picpath = upinfo["filepath"]
         picname = upinfo["filename"]
-        picsize = str(upinfo["filesize"])
-
-        r=json.dumps({"to":self.to,"face":570,\
-                "content":"[[\"offpic\",\""+picpath+"\",\""+picname+"\","+picsize+"], \""+self.messagetext+\
-                "\",[\"font\",\
-                {\"name\":\"宋体\",\"size\":\"10\",\"style\":[0,0,0],\"color\":\"000000\"}]]",\
-                "msg_id":MessageIndex.get(),"clientid":clientid,"psessionid":psessionid\
-                })
-
-        return "r="+urllib.quote(r)+"&clientid="+clientid+"&psessionid="+psessionid
+        picsize = upinfo["filesize"]
+        
+        content = '''[["offpic","%s","%s",%d],[]]'''
+        r = json.dumps(
+                {
+                    "to":self.to,
+                    "face":570,
+                    "content":content % (picpath, picname, picsize),
+                    "msg_id":MessageIndex.get(),
+                    "clientid":clientid,
+                    "psessionid":psessionid
+                } )
+        rdict = urllib.quote(r)
+        return "r=%s&clientid=%s&psessionid=%s" %(rdict, clientid, psessionid)
 
 class GroupMessage(QQMessage):
     '''
@@ -635,6 +629,7 @@ class WebQQ(object):
         return self
 
     def gethashpwd(self):
+        from hashlib import md5
         return md5(
                 md5(
                     (
@@ -679,21 +674,30 @@ class WebQQ(object):
                 "psessionid" : None}
                 )
 
-        encodeparams = "r="+urllib.quote(rdict)+"&clientid="+self.clientid+"&psessionid=null"
+        encodedata = "r=%s&clientid=%s&psessionid=null" %(
+                urllib.quote(rdict),
+                self.clientid
+                )
+        try:
+            with gevent.Timeout(60):
+                response = json.loads(self.opener.open(login2url, encodedata).read())
+                if response["retcode"] !=0:
+                    raise WebQQException(
+                            "login2 failed! errcode=%s, errmsg=%s" %
+                            ( response["retcode"], response["errmsg"] ) 
+                            )
+                
+                self.vfwebqq = response["result"]["vfwebqq"]
+                self.psessionid = response["result"]["psessionid"]
+                self.fakeid = response["result"]["uin"]
+                self.logger.info("登陆成功！")
+            return self
 
-        response = json.loads(self.opener.open(login2url, encodeparams).read())
-        if response["retcode"] !=0:
-            raise WebQQException(
-                    "login2 failed! errcode=%s, errmsg=%s" %
-                    ( response["retcode"], response["errmsg"] ) 
-                    )
-        
-        self.vfwebqq = response["result"]["vfwebqq"]
-        self.psessionid = response["result"]["psessionid"]
-        self.fakeid = response["result"]["uin"]
-        self.logger.info("登陆成功！")
-        return self
+        except ValueError:
+            raise WebQQException("login2 json format error")
 
+        except gevent.timeout.Timeout:
+            raise WebQQException("login2 timeout")
 
     def get_friends(self):
 
@@ -723,12 +727,17 @@ class WebQQ(object):
                 sendrequest.add_header(k,v)
 
         try:
-            return json.loads(
-                    urllib2.urlopen(sendrequest, timeout=timeoutsecs).read()
-                    )
+            with gevent.Timeout(timeoutsecs):
+                return json.loads( urllib2.urlopen(sendrequest).read() )
 
         except urllib2.URLError, urlex:
             raise WebQQException(urlex)
+
+        except ValueError:
+            raise WebQQException("json format error")
+
+        except gevent.timeout.Timeout:
+            raise WebQQException("sendpost timeout")
 
     def requestwithcookie(self):
         ckjar = cookielib.MozillaCookieJar(self.cookiesfile)
@@ -736,8 +745,15 @@ class WebQQ(object):
         return urllib2.build_opener(cookiejar, WebqqHandler)
 
     def sendget(self, url):
-        response = self.requestwithcookie().open(url).read()
-        return json.loads(response)
+        from httplib import BadStatusLine
+        with gevent.Timeout(30, False):
+            try:
+                response = self.requestwithcookie().open(url).read()
+                return json.loads(response)
+            except ValueError:
+                pass
+            except BadStatusLine:
+                pass
 
     def recvfile(self, lcid, to, guid, filename):
         recvonlineurl = "http://d.web2.qq.com/channel/get_file2?lcid=" + lcid + \
@@ -745,10 +761,12 @@ class WebQQ(object):
                 "&count=1&time=1349864752791&clientid=" + self.clientid
         import subprocess
         filename = filename.replace("(","[").replace(")","]")
+        filename = os.getcwd() + "/" + qqsetting. FILEDIR + "/" + filename
         cmd = "wget -q -O '%s' --referer='%s' --cookies=on --load-cookies=%s --keep-session-cookies '%s'"
+
         wgethandler = subprocess.Popen(
                 cmd % (
-                    qqsetting.FILEDIR + "/" + filename.decode("utf-8"), 
+                    filename.decode("utf-8"),
                     self.referurl, 
                     self.cookiesfile, 
                     recvonlineurl
@@ -760,12 +778,13 @@ class WebQQ(object):
         if retcode == 0:
             return filename
         else:
-            raise WebQQException("file receive failed %s" % filename)
+            return False
 
     def poll_online_friends(self):
         geturl = "http://d.web2.qq.com/channel/get_online_buddies2?clientid=%s&psessionid=%s&t=1349932882032"
         while 1:
             try:
+                gevent.sleep(60)
                 onlineguys = self.sendget(geturl % (self.clientid, self.psessionid))
                 retcode, result = onlineguys["retcode"], onlineguys["result"]
                 if retcode == 0 and len(result)>0:
@@ -777,7 +796,6 @@ class WebQQ(object):
                                 "onlinefriends", markname + "-" + guy["status"]
                                 )
                     batch.execute()
-                gevent.sleep(60)
 
             except urllib2.URLError:
                 pass
@@ -882,7 +900,11 @@ class WebQQ(object):
                     qqmesg.send(self, self.clientid, self.psessionid)    
 
                 innermsg = self.mq.get_nowait()
-                innermsg.send(self, self.clientid, self.psessionid)
+
+                if isinstance(innermsg, KeepaliveMessage):
+                    innermsg.send(self)
+                else:
+                    innermsg.send(self, self.clientid, self.psessionid)
 
                 gevent.sleep(0.1)    
 
@@ -937,11 +959,13 @@ class WebQQ(object):
 
     def keepalive(self):
 
+        gevent.sleep(0)
+
         while self.runflag:
+            gevent.sleep(60)
             try:
 
-                KeepaliveMessage().send(self)
-                gevent.sleep(60)
+                self.write_message(KeepaliveMessage())
 
             except greenlet.GreenletExit:
                 self.logger.info("Keepalive exitting......")
@@ -984,14 +1008,14 @@ class WebQQ(object):
 
     def spawn(self, *args, **kwargs):
 
-        g = gevent.spawn(kwargs["task"], *args)
+        glet = gevent.spawn(kwargs["task"], *args)
 
         if kwargs.get("linkok"):
-            g.link(kwargs["linkok"])
+            glet.link(kwargs["linkok"])
         if kwargs.get("linkfailed"):
-            g.link_exception(kwargs["linkfailed"])
+            glet.link_exception(kwargs["linkfailed"])
 
-        return g
+        return glet
 
     def installsignal(self):
         import signal
