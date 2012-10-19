@@ -38,11 +38,11 @@ def formatdate(millseconds):
             )
 
 def getLogger(loggername = "root"):
-    logging.config.fileConfig(os.path.join(os.getcwd(),"chatloggin.conf"))
+    logging.config.fileConfig( os.path.join( os.getcwd(),"chatloggin.conf") )
     return logging.getLogger()
 
 def ctime():
-    return str(int(time.time()))
+    return str( int( time.time() ) )
 
 def localetime():
     return time.strftime("%Y-%m-%d %H:%M:%S")
@@ -54,15 +54,38 @@ def textoutput(msgtype, messagetext):
         prefix, who, message = highlightre.groups()
 
         if msgtype == 1:
-            getLogger().info(Fore.GREEN + prefix + who + Fore.YELLOW+ message + Fore.RESET)
+            getLogger().info(
+                    Fore.GREEN + 
+                    prefix + 
+                    who + 
+                    Fore.YELLOW+ 
+                    message + 
+                    Fore.RESET )
 
         if msgtype == 2:
-            getLogger().info(Fore.BLUE + who + Fore.RESET + message)
+            getLogger().info(
+                    Fore.BLUE + 
+                    who + 
+                    Fore.RESET + 
+                    message )
+
         if msgtype == 3:
-           getLogger().info(Fore.GREEN + prefix + Fore.RED + who + Fore.RESET + message)
+            getLogger().info(
+                   Fore.GREEN + 
+                   prefix + 
+                   Fore.RED + 
+                   who + 
+                   Fore.RESET + 
+                   message )
 
         if msgtype == 4:
-            getLogger().info(Fore.YELLOW + prefix + who + Fore.GREEN+ message + Fore.RESET)
+            getLogger().info(
+                    Fore.YELLOW + 
+                    prefix + 
+                    who + 
+                    Fore.GREEN + 
+                    message + 
+                    Fore.RESET )
 
     else:
         getLogger().info(messagetext)
@@ -119,7 +142,12 @@ MessageIndex = MsgCounter()
 class WebqqHandler(BaseHandler):
 
     def http_request(self, request):
-        request.add_header("Referer","http://d.web2.qq.com/proxy.html?v=20110331002&callback=2")
+
+        request.add_header(
+                "Referer",
+                "http://d.web2.qq.com/proxy.html?v=20110331002&callback=2"
+                )
+
         return request
 
 class WebQQException(Exception):pass
@@ -291,7 +319,7 @@ class MessageHandner(object):
         fromwho = self.context.get_user_info(message["from_uin"])
         filename = message["name"]
         downurl = "http://%s:%d/%s?ver=2173&rkey=%s" % (ip, port, filename, rkey)
-        notifyer.notify("开始接受 %s 发来的离线文件 %s" % (fromwho, filename))
+        notifyer.notify("开始接受 %s 发的离线文件 %s" % (fromwho, filename))
         self.context.spawn(
                 downurl, 
                 filename,
@@ -315,7 +343,8 @@ class QQMessage(object):
                 "msg_id":MessageIndex.get(),"clientid":clientid,"psessionid":psessionid\
                 })
 
-        return "r="+urllib.quote(r)+"&clientid="+clientid+"&psessionid="+psessionid
+        rdict = urllib.quote(r)
+        return "r=%s&clientid=%s&psessionid=%s" % (rdict, clientid, psessionid)
 
     def decode(self):
         return self.to, self.messagetext
@@ -341,7 +370,7 @@ class QQMessage(object):
                 linkfailed = self.sendFailed )
 
     def __str__(self):
-        return "send message to %s, message = %s\n" % (self.to, self.messagetext)
+        return "send message to %s, message = %s" % (self.to, self.messagetext)
 
 class ImageMessage(QQMessage):
     '''发送图片'''
@@ -368,15 +397,26 @@ class ImageMessage(QQMessage):
                 "filename"        : os.path.basename(self.imagefile)
                 }
        
-        self.formdata = " ".join(("--form-string '" + k +"="+str(v) + "'" for k, v in formdata.iteritems()))
+        self.formdata = " ".join(
+                (
+                    "--form-string '%s=%s'" % (k, str(v))
+                    for k, v in formdata.iteritems()
+                )
+                )
+
         import subprocess
-        cmd = "curl -s %s -F 'file=@%s' '%s'" % (self.formdata, self.imagefile, uploadurl)
+        cmd = "curl -s %s -F 'file=@%s' '%s'" % (
+                self.formdata, 
+                self.imagefile, 
+                uploadurl )
+
         uploadhandler = subprocess.Popen(
                 cmd,
                 stdout = subprocess.PIPE,
                 shell = True,
                 close_fds = True
                 )
+
         retcode = uploadhandler.wait()
         if retcode == 0:
             response = uploadhandler.stdout.read()
@@ -390,8 +430,10 @@ class ImageMessage(QQMessage):
         clientid = clientid
         psessionid = psessionid
         upinfo= self.uploadpic()
-        print(upinfo)
-        picpath,picname,picsize = upinfo["filepath"], upinfo["filename"], str(upinfo["filesize"])
+        picpath = upinfo["filepath"]
+        picname = upinfo["filename"]
+        picsize = str(upinfo["filesize"])
+
         r=json.dumps({"to":self.to,"face":570,\
                 "content":"[[\"offpic\",\""+picpath+"\",\""+picname+"\","+picsize+"], \""+self.messagetext+\
                 "\",[\"font\",\
@@ -593,11 +635,12 @@ class WebQQ(object):
         return self
 
     def gethashpwd(self):
-        return md5(\
-                md5(\
-                    (md5(self.qqpwd).digest()+self.uin)\
-                    ).hexdigest().upper()+self.vcode\
-                  ).hexdigest().upper()
+        return md5(
+                md5(
+                    (
+                    md5(self.qqpwd).digest() + self.uin)
+                    ).hexdigest().upper() + self.vcode
+                ).hexdigest().upper()
 
     def login1(self):
         login1url = "http://ptlogin2.qq.com/login?u="+self.qq+"&p="+\
@@ -730,7 +773,9 @@ class WebQQ(object):
                     self.redisconn.delete("onlinefriends")
                     for guy in result:
                         markname = self.get_user_info(guy["uin"])
-                        batch.lpush("onlinefriends", markname + "-" + guy["status"])
+                        batch.lpush(
+                                "onlinefriends", markname + "-" + guy["status"]
+                                )
                     batch.execute()
                 gevent.sleep(60)
 
@@ -747,7 +792,10 @@ class WebQQ(object):
         def sendrequest():
             response = ""
             try:
-                response = self.requestwithcookie().open(getcfaceurl, timeout = 300).read()
+                response = self.requestwithcookie().open(
+                        getcfaceurl, 
+                        timeout = 300
+                        ).read()
                 try:
                     print json.loads(response) 
                     return False
@@ -851,9 +899,11 @@ class WebQQ(object):
     def poll_message(self):
         poll_url = "https://d.web2.qq.com/channel/poll2"
         rdict = json.dumps(
-                {"clientid":self.clientid, \
-                "psessionid":self.psessionid, "key":0,"ids":[]
-                }
+                    {
+                    "clientid":self.clientid,
+                    "psessionid":self.psessionid, 
+                    "key":0,"ids":[]
+                    }
                 )
 
         encodeparams = "r=" + urllib.quote(rdict) + "&clientid=" +\
@@ -875,19 +925,24 @@ class WebQQ(object):
 
                 gevent.sleep(0)
 
-            except WebQQException, webex:
+            except WebQQException:
                 pass
 
             except greenlet.GreenletExit:
                 self.logger.info("poll_message exitting......")
                 break
 
+            except Exception:
+                pass
+
     def keepalive(self):
 
         while self.runflag:
             try:
+
                 KeepaliveMessage().send(self)
                 gevent.sleep(60)
+
             except greenlet.GreenletExit:
                 self.logger.info("Keepalive exitting......")
                 break
@@ -922,7 +977,7 @@ class WebQQ(object):
         self.taskpool.join()
     
     def stop(self):
-        LogoutMessage().send(self, self.clientid, self.psessionid).get()
+        self.logout()
         self.runflag = False
         self.taskpool.kill()
         self.taskpool.join()
@@ -945,7 +1000,6 @@ class WebQQ(object):
 
     def logout(self):
         LogoutMessage().send(self, self.clientid, self.psessionid).get()
-        self.stop()
 
 if __name__ == '__main__':
     os.system("stty -echo")
