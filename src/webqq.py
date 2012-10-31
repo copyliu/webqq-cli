@@ -84,20 +84,7 @@ def textoutput(msgtype, messagetext):
 
 class NotifyOsd(object):
     def __init__(self):
-        self.capabilities = {'actions':    False,
-        'body':                            False,
-        'body-hyperlinks':                 False,
-        'body-images':                     False,
-        'body-markup':                     False,
-        'icon-multi':                      False,
-        'icon-static':                     False,
-        'sound':                           False,
-        'image/svg+xml':                   False,
-        'x-canonical-private-synchronous': False,
-        'x-canonical-append':              False,
-        'x-canonical-private-icon-only':   False,
-        'x-canonical-truncation':          False}
-        self.initflag = False
+        pass
 
     def initCaps(self):
         pynotify.init("webqq")
@@ -111,12 +98,11 @@ class NotifyOsd(object):
 
 
     def notify(self, notifytext, timeout = 3, icon = None, title = "通知"):
-
-        if not self.initflag:
-            self.initCaps()
-        notifyins = pynotify.Notification(title, notifytext, icon)
-        notifyins.set_timeout(timeout*1000)
-        notifyins.show()
+        reload(qqsetting)
+        if qqsetting.ENABLE_OSD:
+            notifyins = pynotify.Notification(title, notifytext, icon)
+            notifyins.set_timeout(timeout*1000)
+            notifyins.show()
 
 notifyer = NotifyOsd()
 
@@ -347,8 +333,8 @@ class QQMessage(object):
     def sendFailed(self, result):
         if self.retrycount <3:
             self.context.write_message(self)
-            self.retrycount+=1
-        elif self.retrycount==3:
+            self.retrycount += 1
+        elif self.retrycount == 3:
             print str(self), "发送失败"
 
     def send(self, context, clientid, psessionid):
@@ -446,13 +432,18 @@ class GroupMessage(QQMessage):
         self.url = "http://d.web2.qq.com/channel/send_qun_msg2"
 
     def encode(self, clientid, psessionid):
-        rdict = json.dumps({"group_uin":self.context.get_uin_by_groupname(self.to),\
-                "content":"[\""+self.messagetext+\
-                "\\n\",[\"font\",\
-                {\"name\":\"宋体\",\"size\":\"10\",\"style\":[0,0,0],\"color\":\"000000\"}]]",\
-                "msg_id":MessageIndex.get(),"clientid":clientid,"psessionid":psessionid\
+        groupuin = self.context.get_uin_by_groupname(self.to)
+        content = '''["%s"]''' % self.messagetext
+        r = json.dumps(
+                {
+                    "group_uin":groupuin,
+                    "content": content,
+                    "msg_id":MessageIndex.get(),
+                    "clientid":clientid,
+                    "psessionid":psessionid
                 })
-        return "r="+urllib.quote(rdict)+"&clientid="+clientid+"&psessionid="+psessionid
+        rdict = urllib.quote(r)        
+        return "r="+rdict+"&clientid="+clientid+"&psessionid="+psessionid
 
     def __str__(self):
         return "send group message %s to %s " % (self.messagetext, self.to)
@@ -586,7 +577,7 @@ class WebQQ(object):
         self.taskpool = pool.Pool(10)
         self.runflag = False
         from redis import Redis
-        self.redisconn = Redis()
+        self.redisconn = Redis(host="10.86.11.116")
         self.logger = getLogger()
 
     def build_userinfo(self):
@@ -638,6 +629,7 @@ class WebQQ(object):
                 ).hexdigest().upper()
 
     def login1(self):
+        print(self.gethashpwd())
         login1url = "http://ptlogin2.qq.com/login?u="+self.qq+"&p="+\
                 self.gethashpwd()+"&verifycode="+self.vcode+\
                 "&webqq_type=10&remember_uin=1&login2qq=1&aid=1003903&u1"+\
@@ -657,6 +649,8 @@ class WebQQ(object):
         loginurl = "http://check.ptlogin2.qq.com/check?uin=%s&appid=1003903&r=%s"
         response = self.opener.open(loginurl % (self.qq,random.random())).read()
         retcode, vcode, uin = eval(response[12:-1]) 
+        print(response)
+        print(retcode, vcode, uin)
         if retcode !='0':
             raise WebQQException("Get VCODE Failed!")
 
@@ -786,6 +780,10 @@ class WebQQ(object):
             try:
                 gevent.sleep(60)
                 onlineguys = self.sendget(geturl % (self.clientid, self.psessionid))
+
+                if not onlineguys:
+                    continue
+
                 retcode, result = onlineguys["retcode"], onlineguys["result"]
                 if retcode == 0 and result:
                     batch = self.redisconn.pipeline(transaction = False)

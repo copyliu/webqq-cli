@@ -47,7 +47,7 @@ class Chat(object):
 
     def __init__(self):
         self.lastfriend = ""
-        self.conn = Redis()
+        self.conn = Redis(host="10.86.11.116")
         self.runflag = True
 
     def executecmd(self, cmd, param):
@@ -75,6 +75,15 @@ class Chat(object):
                 self.sendto(IMAGEMESSAGE, self.lastfriend, param)
             else:
                 print(Fore.RED+"请先选择朋友或输入图像路径"+Fore.RESET)
+
+        elif cmd == "brocast":
+            '''
+            {"messagebody":['p1','p2']}
+            '''
+            onlinecount = self.conn.llen("onlinefriends")
+            for guy in self.conn.lrange("onlinefriends", 0, onlinecount):
+                to = guy[0:guy.find("-")]
+                self.sendto(MESSAGE, to, param)
 
         elif cmd == "quit":
             self.runflag = False
