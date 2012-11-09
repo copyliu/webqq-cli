@@ -41,6 +41,7 @@ from colorama import Fore
 MESSAGE = 1
 SHAKEMESSAGE = 2
 GRPMESSAGE = 3
+LOGOUTMESSAGE = 4
 IMAGEMESSAGE = 5
 
 class Chat(object):
@@ -87,6 +88,9 @@ class Chat(object):
 
         elif cmd == "quit":
             self.runflag = False
+            self.sendto(LOGOUTMESSAGE, None, None)
+        elif cmd == "exit":
+            self.runflag = False
         else:
             print(Fore.RED + ":quit " + Fore.RESET + "exit client")
             print(Fore.RED + ":shake FRIEND " + Fore.RESET + "send shake message to friend")
@@ -107,7 +111,6 @@ class Chat(object):
             tokens = remaintext.split()
             if prefix == "|":
                 to, body  = tokens[0], "".join(tokens[1:])
-                # self.lastfriend = to
             else:
                 to, body = self.lastfriend, "".join(tokens)
 
@@ -120,14 +123,19 @@ class Chat(object):
                 self.sendto(MESSAGE, to, body)    
 
     def sendto(self, msgtype, to, message):
-        if not to or to == "":
-            return
-        tolen, messagelen = len(to), len(message)
+
         bytemsg = ""
-        if msgtype == MESSAGE or msgtype == GRPMESSAGE or msgtype == IMAGEMESSAGE:
-            bytemsg = struct.pack("iii%ss%ss" % (tolen, messagelen), msgtype, tolen, messagelen, to, message)
-        elif msgtype == SHAKEMESSAGE:
-            bytemsg = struct.pack("ii%ss" % tolen, msgtype, tolen, to)
+
+        if msgtype == LOGOUTMESSAGE:
+            bytemsg = struct.pack("i", 4)
+        else:
+            if not to or to == "":
+                return
+            tolen, messagelen = len(to), len(message)
+            if msgtype == MESSAGE or msgtype == GRPMESSAGE or msgtype == IMAGEMESSAGE:
+                bytemsg = struct.pack("iii%ss%ss" % (tolen, messagelen), msgtype, tolen, messagelen, to, message)
+            elif msgtype == SHAKEMESSAGE:
+                bytemsg = struct.pack("ii%ss" % tolen, msgtype, tolen, to)
 
         self.conn.lpush("messagepool", bytemsg)
 
@@ -153,7 +161,7 @@ class Chat(object):
             message = raw_input("=>%s: " % (self.lastfriend))
             self.parsecmd(message)
             print("")
-   
+ 
 if __name__ == '__main__':
 
     Chat().getfriends().chat()

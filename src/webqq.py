@@ -11,8 +11,7 @@ from urllib2 import BaseHandler
 import random, json, time, os
 import logging,logging.config
 
-from colorama import init;init()
-from colorama import Fore
+from colorama import init, Fore;init()
 
 import gevent, greenlet
 from gevent import monkey, queue, pool;monkey.patch_all()
@@ -52,7 +51,7 @@ def textoutput(msgtype, messagetext):
                     who + 
                     Fore.YELLOW+ 
                     message + 
-                    Fore.RESET )
+                    Fore.RESET + "\n")
 
         if msgtype == 2:
             getLogger().info(
@@ -77,7 +76,7 @@ def textoutput(msgtype, messagetext):
                     who + 
                     Fore.GREEN + 
                     message + 
-                    Fore.RESET )
+                    Fore.RESET + "\n")
 
     else:
         getLogger().info(messagetext)
@@ -179,16 +178,17 @@ class MessageHandner(object):
                             task = self.context.downoffpic
                             )
 
-                if msgtype == "cface":    
+                elif msgtype == "cface":    
                     to, guid, _ = str(message["from_uin"]), msg[1], msg[2]
                     self.context.spawn(to, guid, task = self.context.downcface)
 
-
+        faceuri = self.context.getface(message["from_uin"])
+        
         notifyer.notify(
                 "".join(messagebody).encode("utf-8"), 
                 title = fromwho, 
                 timeout= 5,
-                icon = self.context.getface( message["from_uin"] )
+                icon = faceuri 
                 )
 
         textoutput(1,"%s [%s] 说 %s" % ( sendtime, fromwho, messagebody ) )
@@ -196,16 +196,17 @@ class MessageHandner(object):
     def on_group_message(self, message):
 
         groupcode = message["group_code"] 
-        fromwho = self.context.get_user_info(message["send_uin"]) 
+        # fromwho = self.context.get_user_info(message["send_uin"]) 
+        fromwho = self.context.get_member_by_code(message["send_uin"])
         mess = message["content"][1:]
 
         sendtime = formatdate(message["time"])
 
         messagebody = self.__joinmessage(mess)
-        messagebody = "群%s [中%s] 说 %s" % (
-                self.context.get_groupname_by_code(groupcode),
+        messagebody = "%s [%s] 说 %s" % (
+                sendtime + " " + self.context.get_groupname_by_code(groupcode),
                 fromwho,
-                sendtime + " " + messagebody
+                messagebody
                 )
 
         textoutput(3,messagebody) 
@@ -231,6 +232,7 @@ class MessageHandner(object):
 
         if fromwho in qqsetting.CARE_FRIENDS:
             faceuri = self.context.getface(message["uin"])
+            # print(faceuri)
             logmessage = "%s %s" % (fromwho, status)
             notifyer.notify(logmessage, timeout = 2, icon = faceuri)
 
@@ -520,11 +522,11 @@ class MessageFactory(object):
 
         msgtype = struct.unpack("i", message[:4])[0]
 
+        sendtime = localetime()
         if msgtype == 1:
             tolen, bodylen = struct.unpack("ii", message[4:12])
             to, body = struct.unpack("%ss%ss" % (tolen, bodylen), message[12:])
             uin = webcontext.get_uin_by_name(to)
-            sendtime = localetime()
             textoutput(4,"%s [对%s] 说 %s" % (sendtime, to, body))
             return QQMessage(uin, body.decode("utf-8"), context = webcontext)
 
@@ -538,6 +540,7 @@ class MessageFactory(object):
         if msgtype == 3:
             tolen, bodylen = struct.unpack("ii", message[4:12])
             to, body = struct.unpack("%ss%ss" % (tolen, bodylen), message[12:])
+            textoutput(4,"%s [对%s] 说 %s" % (sendtime, to, body))
             to = to[to.find("_")+1:]
             return GroupMessage(to, body.decode("utf-8"), context = webcontext)
 
@@ -611,11 +614,16 @@ class WebQQ(object):
 
         grouplist = response["result"]["gnamelist"]
         self.redisconn.delete("groups")
+        self.groupmemsinfo = {}
         for group in grouplist:
             self.groupinfo[group["code"]] = group
             self.groupinfo[group["name"]] = group
             self.redisconn.lpush("groups","%d_%s" % (self.friendindex, group["name"]))
             self.friendindex +=1
+            getgroupinfourl = "http://s.web2.qq.com/api/get_group_info_ext2?gcode=%s&vfwebqq=%s&t=%s"
+            groupinfo = self.sendget(getgroupinfourl % (group["code"], self.vfwebqq, ctime()))
+            membersinfo =  groupinfo["result"]["minfo"]
+            [self.groupmemsinfo.update({member["uin"]:member["nick"].decode("utf-8")}) for member in membersinfo]
 
         return self
 
@@ -629,7 +637,6 @@ class WebQQ(object):
                 ).hexdigest().upper()
 
     def login1(self):
-        print(self.gethashpwd())
         login1url = "http://ptlogin2.qq.com/login?u="+self.qq+"&p="+\
                 self.gethashpwd()+"&verifycode="+self.vcode+\
                 "&webqq_type=10&remember_uin=1&login2qq=1&aid=1003903&u1"+\
@@ -637,7 +644,11 @@ class WebQQ(object):
                 "webqq_type%3D10&h=1&ptredirect=0&ptlang=2052&from_ui=1&pttype=1"+\
                 "&dumy=&fp=loginerroralert&action=1-20-8656&mibao_css=m_webqq&t=1&g=1"
 
-        self.opener.open(login1url)
+        response = self.opener.open(login1url).read()
+        retcode, _, _, _, tip, nickname = eval(response[6:-3])
+        if retcode != '0':
+           raise WebQQException(tip)
+
         self.ckjar.save()
         self.ptwebqq = self.ckjar._cookies[".qq.com"]["/"]["ptwebqq"].value
         self.uincode = self.ckjar._cookies[".qq.com"]["/"]["uin"].value[1:]
@@ -649,8 +660,6 @@ class WebQQ(object):
         loginurl = "http://check.ptlogin2.qq.com/check?uin=%s&appid=1003903&r=%s"
         response = self.opener.open(loginurl % (self.qq,random.random())).read()
         retcode, vcode, uin = eval(response[12:-1]) 
-        print(response)
-        print(retcode, vcode, uin)
         if retcode !='0':
             raise WebQQException("Get VCODE Failed!")
 
@@ -853,6 +862,7 @@ class WebQQ(object):
 
     def getface(self, uin):
         qqnumber = self.getqqnumber(uin)
+        # print(qqnumber)
         if qqnumber:
             face = "%s/%s.jpg" % (os.getcwd()+"/"+qqsetting.FACEDIR, qqnumber)
             if os.path.exists(face):
@@ -895,6 +905,8 @@ class WebQQ(object):
 
                     if isinstance(qqmesg, LogoutMessage):
                         print "logout message"
+                        self.stop()
+                        continue
 
                     qqmesg.send(self, self.clientid, self.psessionid)    
 
@@ -981,6 +993,9 @@ class WebQQ(object):
         if groupinfo:
             return groupinfo["name"].encode("utf-8")
 
+    def get_member_by_code(self, code):
+        return self.groupmemsinfo.get(code, code)
+
     def get_uin_by_groupname(self, groupname):
         groupinfo = self.groupinfo.get(groupname.decode("utf-8"), None)
 
@@ -993,7 +1008,7 @@ class WebQQ(object):
         self.login().login1().login2().get_friends().build_groupinfo()
         self.taskpool.spawn(self.send_message)
         self.taskpool.spawn(self.poll_message)
-        self.taskpool.spawn(self.keepalive)
+        # self.taskpool.spawn(self.keepalive)
         self.taskpool.spawn(self.poll_online_friends)
 
         self.installsignal()
@@ -1032,5 +1047,7 @@ if __name__ == '__main__':
     os.system("stty echo")
     print ""
     qq = WebQQ(username, password)
-    qq.start()
-    print "qq exitting"
+    try:
+        qq.start()
+    except WebQQException, ex:
+        print(str(ex))
