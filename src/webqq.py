@@ -14,13 +14,23 @@ import logging,logging.config
 from colorama import init, Fore;init()
 
 import gevent, greenlet
-from gevent import monkey, queue, pool;monkey.patch_all()
-import struct, pynotify
+from gevent import monkey, queue, pool;monkey.patch_all(dns = False)
+import struct
 import qqsetting
 
 def rmfile(filepath):
     if os.path.exists(filepath):
         os.unlink(filepath)
+
+def processopen(param):
+    import subprocess
+    handler = subprocess.Popen(param, 
+            shell = True, 
+            stdout = subprocess.PIPE, 
+            close_fds = True
+            )
+    retcode = handler.wait()
+    return retcode, handler
 
 def formatdate(millseconds):
     return time.strftime(
@@ -83,23 +93,18 @@ def textoutput(msgtype, messagetext):
 
 class NotifyOsd(object):
     def __init__(self):
-        pass
-
-    def initCaps(self):
-        pynotify.init("webqq")
-        self.initflag = True
-        caps = pynotify.get_server_caps ()
-        if caps is None:
-            print "Failed to receive server caps."
-
-        for cap in caps:
-            self.capabilities[cap] = True        
-
+        try:
+            self.pynotify = __import__("pynotify")
+        except ImportError:
+            pass
 
     def notify(self, notifytext, timeout = 3, icon = None, title = "通知"):
+        if not self.pynotify:
+            return
+
         reload(qqsetting)
         if qqsetting.ENABLE_OSD:
-            notifyins = pynotify.Notification(title, notifytext, icon)
+            notifyins = self.pynotify.Notification(title, notifytext, icon)
             notifyins.set_timeout(timeout*1000)
             notifyins.show()
 
@@ -209,7 +214,35 @@ class MessageHandner(object):
                 messagebody
                 )
 
+        for msg in mess:
+            if isinstance(msg, list):
+                msgtype = msg[0]
+                msgcontent = msg[1]
+                if msgtype == "cface":    
+                    gid, uin = message["group_code"], message["send_uin"]
+                    fid = message["info_seq"]
+                    filename = msgcontent["name"]
+                    pichost, hostport = msgcontent["server"].split(":")
+                    vfwebqq = self.context.vfwebqq
+                    self.context.spawn(
+                            str(gid), str(uin), pichost, hostport,
+                            str(fid), filename, vfwebqq,
+                            task = self.__downgrppic
+                            )
+
+
         textoutput(3,messagebody) 
+
+    def __downgrppic(self, gin, uin, host, port, fid, filename,vfwebqq):
+        '''下载群图片'''
+        grouppicurl = "http://webqq.qq.com/cgi-bin/get_group_pic?type=0&gid=%s&uin=%s&rip=%s&rport=%s&fid=%s=&pic=%s&vfwebqq=&%s&t=%s"
+        grouppicurl = grouppicurl % (gin, uin, host, port, fid, urllib2.quote(filename), vfwebqq, ctime())
+        fullpath = os.path.abspath(os.path.join(qqsetting.FACEDIR, filename.replace("{","").replace("}","")))
+        cmd = "wget -q -O '%s' '%s'" % (fullpath, grouppicurl)
+        retcode, handler = processopen(cmd)
+
+        if retcode == 0:
+            print("\nfile://" + fullpath)
 
     def on_shake_message(self, message):
 
@@ -289,6 +322,8 @@ class MessageHandner(object):
         else:
             notifyer.notify("离线文件 %s 下载失败" % filename)
             rmfile(filename)
+
+
 
     def on_push_offfile(self, message):
         rkey, ip, port = message["rkey"], message["ip"], message["port"]
@@ -622,8 +657,11 @@ class WebQQ(object):
             self.friendindex +=1
             getgroupinfourl = "http://s.web2.qq.com/api/get_group_info_ext2?gcode=%s&vfwebqq=%s&t=%s"
             groupinfo = self.sendget(getgroupinfourl % (group["code"], self.vfwebqq, ctime()))
-            membersinfo =  groupinfo["result"]["minfo"]
-            [self.groupmemsinfo.update({member["uin"]:member["nick"].decode("utf-8")}) for member in membersinfo]
+            try:
+                membersinfo =  groupinfo["result"]["minfo"]
+                [self.groupmemsinfo.update({member["uin"]:member["nick"].decode("utf-8")}) for member in membersinfo]
+            except:
+                pass
 
         return self
 
@@ -966,7 +1004,7 @@ class WebQQ(object):
                 break
 
             except Exception:
-                pass
+                import traceback;traceback.print_exc()
 
     def keepalive(self):
 
